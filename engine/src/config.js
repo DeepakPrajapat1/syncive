@@ -34,8 +34,10 @@ export const config = {
     redirectUri: process.env.HUBSPOT_REDIRECT_URI || `${publicUrl}/oauth/callback`,
     webhookUrl: `${publicUrl}/webhooks/hubspot`,
     scopes: [
-      // NB: there is no 'oauth' scope on the projects platform — auth.type
-      // establishes the flow. Sending it makes HubSpot reject the install.
+      // HubSpot requires the 'oauth' scope group on the app and adds it
+      // automatically; the install URL has to ask for it too or the scope
+      // sets won't match.
+      'oauth',
       'crm.objects.contacts.read',
       'crm.objects.companies.read',
       'crm.objects.deals.read',
