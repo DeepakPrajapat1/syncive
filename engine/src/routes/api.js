@@ -54,6 +54,23 @@ apiRouter.post('/syncs', wrap(async (req, res) => {
 
 // --- the health dashboard's data source --------------------------------------
 
+// Which HubSpot portals this account has connected. Needed to create a sync,
+// and to show a customer what they actually authorised.
+apiRouter.get('/accounts/:accountId/connections', wrap(async (req, res) => {
+  const { accountId } = req.params
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(accountId)) {
+    return res.status(400).json({ error: 'account_id must be a UUID' })
+  }
+  const { rows } = await query(
+    `select id, portal_id, scopes, expires_at, created_at
+       from syncive.hubspot_connections
+      where account_id = $1
+      order by created_at`,
+    [accountId]
+  )
+  res.json({ connections: rows })
+}))
+
 apiRouter.get('/accounts/:accountId/health', wrap(async (req, res) => {
   const { accountId } = req.params
 
