@@ -3,6 +3,7 @@ import { config, hubspotConfigured } from './config.js'
 import { oauthRouter } from './routes/oauth.js'
 import { webhookRouter } from './routes/webhooks.js'
 import { apiRouter } from './routes/api.js'
+import { dashboardRouter } from './routes/dashboard.js'
 import { pool } from './db/meta.js'
 import { applySchema } from './migrate.js'
 import { startWorkers } from './queue/jobs.js'
@@ -14,6 +15,7 @@ app.use('/webhooks', webhookRouter)
 app.use(express.json({ limit: '1mb' }))
 app.use('/oauth', oauthRouter)
 app.use('/api', apiRouter)
+app.use('/dashboard', dashboardRouter)
 
 app.get('/healthz', async (_req, res) => {
   try {

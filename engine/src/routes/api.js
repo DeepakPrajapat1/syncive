@@ -7,9 +7,13 @@ import { OBJECT_TYPES } from '../hubspot/client.js'
 
 export const apiRouter = express.Router()
 
+// Express 4 does not catch rejections from async handlers — an unhandled one
+// takes the whole process down. Every handler below goes through this.
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next)
+
 // --- destinations ------------------------------------------------------------
 
-apiRouter.post('/destinations', async (req, res) => {
+apiRouter.post('/destinations', wrap(async (req, res) => {
   const { account_id, dsn, schema_name = 'hubspot' } = req.body || {}
   if (!account_id || !dsn) return res.status(400).json({ error: 'account_id and dsn are required' })
 
@@ -22,11 +26,11 @@ apiRouter.post('/destinations', async (req, res) => {
     [account_id, encrypt(dsn), schema_name]
   )
   res.json({ destination: rows[0], database: probe.database, server: probe.version })
-})
+}))
 
 // --- syncs -------------------------------------------------------------------
 
-apiRouter.post('/syncs', async (req, res) => {
+apiRouter.post('/syncs', wrap(async (req, res) => {
   const { account_id, connection_id, destination_id, object_types = OBJECT_TYPES } = req.body || {}
   if (!account_id || !connection_id || !destination_id) {
     return res.status(400).json({ error: 'account_id, connection_id and destination_id are required' })
@@ -46,11 +50,11 @@ apiRouter.post('/syncs', async (req, res) => {
     await enqueueBackfill(rows[0].id)
   }
   res.json({ syncs: created, message: 'Backfill queued' })
-})
+}))
 
 // --- the health dashboard's data source --------------------------------------
 
-apiRouter.get('/accounts/:accountId/health', async (req, res) => {
+apiRouter.get('/accounts/:accountId/health', wrap(async (req, res) => {
   const { accountId } = req.params
 
   const { rows: syncs } = await query(
@@ -108,9 +112,9 @@ apiRouter.get('/accounts/:accountId/health', async (req, res) => {
     overall: detailed.some((s) => s.health !== 'healthy') ? 'attention' : 'healthy',
     syncs: detailed,
   })
-})
+}))
 
-apiRouter.get('/syncs/:syncId/rows', async (req, res) => {
+apiRouter.get('/syncs/:syncId/rows', wrap(async (req, res) => {
   const { rows } = await query(
     `select destination_id, object_type from syncive.syncs where id = $1`,
     [req.params.syncId]
@@ -122,10 +126,10 @@ apiRouter.get('/syncs/:syncId/rows', async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err.message })
   }
-})
+}))
 
 // Retry everything we couldn't deliver. One button, no support ticket.
-apiRouter.post('/syncs/:syncId/retry-failures', async (req, res) => {
+apiRouter.post('/syncs/:syncId/retry-failures', wrap(async (req, res) => {
   const { rows } = await query(
     `select id, hubspot_id, payload from syncive.dead_letters
       where sync_id = $1 and resolved_at is null limit 500`,
@@ -136,4 +140,4 @@ apiRouter.post('/syncs/:syncId/retry-failures', async (req, res) => {
   if (events.length) await enqueueWebhookEvents(events)
   await query(`update syncive.dead_letters set resolved_at = now() where id = any($1)`, [rows.map((r) => r.id)])
   res.json({ requeued: events.length })
-})
+}))

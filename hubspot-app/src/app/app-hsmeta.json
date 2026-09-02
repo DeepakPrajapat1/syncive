@@ -1,0 +1,25 @@
+{
+  "uid": "syncive_app",
+  "type": "app",
+  "config": {
+    "name": "Syncive",
+    "description": "Syncive keeps your HubSpot contacts, companies and deals mirrored into your own Postgres database in real time.",
+    "distribution": "marketplace",
+    "auth": {
+      "type": "oauth",
+      "redirectUrls": [
+        "https://syncive-engine.onrender.com/oauth/callback"
+      ],
+      "requiredScopes": [
+        "crm.objects.contacts.read",
+        "crm.objects.companies.read",
+        "crm.objects.deals.read",
+        "crm.schemas.contacts.read",
+        "crm.schemas.companies.read",
+        "crm.schemas.deals.read"
+      ],
+      "optionalScopes": [],
+      "conditionallyRequiredScopes": []
+    }
+  }
+}
