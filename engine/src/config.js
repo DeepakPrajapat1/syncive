@@ -9,9 +9,12 @@ const required = (name) => {
 const port = Number(process.env.PORT || 8080)
 // RENDER_EXTERNAL_URL is set by Render automatically, so a deploy knows its own
 // address without anyone configuring it. PUBLIC_URL overrides it (custom domain).
+// Ignore a PUBLIC_URL that isn't an absolute URL — a half-set value (a bare
+// hostname, say) would otherwise produce OAuth/webhook URLs HubSpot rejects.
+const absolute = (u) => (/^https?:\/\//.test(u || '') ? u : null)
 const publicUrl = (
-  process.env.PUBLIC_URL ||
-  process.env.RENDER_EXTERNAL_URL ||
+  absolute(process.env.PUBLIC_URL) ||
+  absolute(process.env.RENDER_EXTERNAL_URL) ||
   `http://localhost:${port}`
 ).replace(/\/+$/, '')
 
