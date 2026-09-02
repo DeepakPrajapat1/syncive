@@ -80,6 +80,33 @@ await check('marks deletions', () => {
   assert.equal(e.objectType, 'companies')
 })
 
+// 4b. first-time install ordering — regression test
+// A brand-new account has no row in syncive.accounts yet, and
+// hubspot_connections.account_id is a foreign key onto it. The OAuth callback
+// must insert the account BEFORE saving the connection. Getting this backwards
+// broke the very first real install.
+await check('first install creates the account row before the connection', async () => {
+  const freshAccount = crypto.randomUUID()
+  await assert.rejects(
+    query(
+      `insert into syncive.hubspot_connections (account_id, portal_id, access_token_enc, refresh_token_enc, expires_at)
+       values ($1, 777001, $2, $3, now() + interval '1 hour')`,
+      [freshAccount, encrypt('at'), encrypt('rt')]
+    ),
+    /foreign key constraint/,
+    'connection-before-account must fail — that is the constraint this test guards'
+  )
+
+  await query(`insert into syncive.accounts (id, email) values ($1, $2) on conflict (id) do nothing`,
+    [freshAccount, `account-${freshAccount}@pending.local`])
+  const { rows } = await query(
+    `insert into syncive.hubspot_connections (account_id, portal_id, access_token_enc, refresh_token_enc, expires_at)
+     values ($1, 777001, $2, $3, now() + interval '1 hour') returning id`,
+    [freshAccount, encrypt('at'), encrypt('rt')]
+  )
+  assert.ok(rows[0].id, 'account-then-connection succeeds')
+})
+
 // 5. destination provisioning + writes (real Postgres)
 const DEST_DSN = 'postgres://postgres@localhost:5433/customer_db'
 

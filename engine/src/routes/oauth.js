@@ -23,12 +23,16 @@ oauthRouter.get('/callback', async (req, res) => {
   try {
     const accountId = verifyState(state)
     const tokens = await exchangeCode(code)
-    const connection = await saveConnection(accountId, tokens)
 
+    // The account row has to exist first: hubspot_connections.account_id is a
+    // foreign key onto it, so saving the connection before this fails the very
+    // first time an account installs.
     await query(
       `insert into syncive.accounts (id, email) values ($1, $2) on conflict (id) do nothing`,
       [accountId, `account-${accountId}@pending.local`]
     )
+
+    const connection = await saveConnection(accountId, tokens)
 
     res.send(renderSuccess(connection.portal_id))
   } catch (err) {
