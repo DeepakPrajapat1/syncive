@@ -15,11 +15,6 @@ services:
         value: "20"
       - key: RUN_WORKER_IN_PROCESS
         value: "true"
-      - key: PUBLIC_URL
-        fromService:
-          type: web
-          name: syncive-engine
-          property: host
       # Set these in the Render dashboard (marked sync:false = never in git).
       - key: META_DATABASE_URL
         sync: false

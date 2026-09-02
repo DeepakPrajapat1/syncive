@@ -7,7 +7,13 @@ const required = (name) => {
 }
 
 const port = Number(process.env.PORT || 8080)
-const publicUrl = (process.env.PUBLIC_URL || `http://localhost:${port}`).replace(/\/+$/, '')
+// RENDER_EXTERNAL_URL is set by Render automatically, so a deploy knows its own
+// address without anyone configuring it. PUBLIC_URL overrides it (custom domain).
+const publicUrl = (
+  process.env.PUBLIC_URL ||
+  process.env.RENDER_EXTERNAL_URL ||
+  `http://localhost:${port}`
+).replace(/\/+$/, '')
 
 export const config = {
   port,
