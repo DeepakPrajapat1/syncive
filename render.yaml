@@ -23,8 +23,9 @@ services:
       # Set these in the Render dashboard (marked sync:false = never in git).
       - key: META_DATABASE_URL
         sync: false
+      # Render generates this once and keeps it stable across deploys.
       - key: ENCRYPTION_KEY
-        sync: false
+        generateValue: true
       # Filled in after the HubSpot app exists. The service boots without them.
       - key: HUBSPOT_CLIENT_ID
         sync: false

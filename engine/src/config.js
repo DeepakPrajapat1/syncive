@@ -53,8 +53,13 @@ export function requireHubspot() {
 // ---- credential encryption (AES-256-GCM) ------------------------------------
 // Tokens and DSNs are encrypted before they touch disk. The key never leaves env.
 
-const key = Buffer.from(required('ENCRYPTION_KEY'), 'hex')
-if (key.length !== 32) throw new Error('ENCRYPTION_KEY must be 32 bytes of hex (64 chars)')
+// Accept either 64 hex chars (an explicit 32-byte key) or any other secret,
+// which we stretch to 32 bytes. That lets the host generate the value for us
+// instead of a human copying a key around.
+const rawKey = required('ENCRYPTION_KEY')
+const key = /^[0-9a-fA-F]{64}$/.test(rawKey)
+  ? Buffer.from(rawKey, 'hex')
+  : crypto.createHash('sha256').update(rawKey, 'utf8').digest()
 
 export function encrypt(plaintext) {
   const iv = crypto.randomBytes(12)
