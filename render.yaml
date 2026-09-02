@@ -1,0 +1,32 @@
+# One-click deploy: Render -> New -> Blueprint -> pick this repo.
+# Free tier has no separate worker dyno, so the queue workers run inside the
+# web service (RUN_WORKER_IN_PROCESS). Move them to their own service on paid.
+services:
+  - type: web
+    name: syncive-engine
+    runtime: node
+    plan: free
+    rootDir: engine
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: RUN_WORKER_IN_PROCESS
+        value: "true"
+      - key: PUBLIC_URL
+        fromService:
+          type: web
+          name: syncive-engine
+          property: host
+      # Set these in the Render dashboard (marked sync:false = never in git).
+      - key: META_DATABASE_URL
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      # Filled in after the HubSpot app exists. The service boots without them.
+      - key: HUBSPOT_CLIENT_ID
+        sync: false
+      - key: HUBSPOT_CLIENT_SECRET
+        sync: false
