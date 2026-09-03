@@ -100,9 +100,36 @@ export async function hubspotRequest(connectionId, path, { method = 'GET', body,
 
 export const OBJECT_TYPES = ['contacts', 'companies', 'deals']
 
-export async function listProperties(connectionId, objectType) {
-  const data = await hubspotRequest(connectionId, `/crm/v3/properties/${objectType}`)
-  return data.results.filter((p) => !p.calculated && !p.hidden)
+// A portal's property definitions change when someone edits them in HubSpot —
+// minutes-to-months apart, not seconds. But every webhook was re-fetching the
+// whole list (hundreds of properties) before touching the record it actually
+// came for: two API calls and a large response per event, which is what made a
+// 500-record import take the better part of an hour to drain. A short TTL keeps
+// schema drift getting picked up while collapsing a burst into one fetch.
+const PROPERTIES_TTL_MS = 5 * 60_000
+const propertiesCache = new Map()
+
+export async function listProperties(connectionId, objectType, { fresh = false } = {}) {
+  const key = `${connectionId}:${objectType}`
+  const hit = propertiesCache.get(key)
+  if (!fresh && hit && hit.expires > Date.now()) return hit.value
+
+  // Concurrent callers share one in-flight request rather than each firing their own.
+  if (!fresh && hit?.pending) return hit.pending
+
+  const pending = hubspotRequest(connectionId, `/crm/v3/properties/${objectType}`)
+    .then((data) => {
+      const value = data.results.filter((p) => !p.calculated && !p.hidden)
+      propertiesCache.set(key, { value, expires: Date.now() + PROPERTIES_TTL_MS })
+      return value
+    })
+    .catch((err) => {
+      propertiesCache.delete(key)
+      throw err
+    })
+
+  propertiesCache.set(key, { ...hit, pending })
+  return pending
 }
 
 export async function listPage(connectionId, objectType, { after, limit = 100, properties }) {

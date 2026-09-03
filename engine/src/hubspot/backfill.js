@@ -16,7 +16,11 @@ export async function runBackfillChunk(syncId) {
   const sync = rows[0]
   if (!sync) throw new Error(`No sync ${syncId}`)
 
-  const properties = await listProperties(sync.connection_id, sync.object_type)
+  // The first chunk of a backfill is where a customer expects new HubSpot fields
+  // to show up as new columns, so that one bypasses the cache.
+  const properties = await listProperties(sync.connection_id, sync.object_type, {
+    fresh: !sync.backfill_cursor,
+  })
   await provisionTable(sync.destination_id, sync.object_type, properties)
   const propNames = properties.map((p) => p.name)
 
