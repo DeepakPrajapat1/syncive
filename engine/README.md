@@ -169,11 +169,7 @@ a paid instance is the first thing to buy when a real customer shows up.
 
 ## Known gaps
 
-**No authentication.** Every route is guarded only by knowing the account UUID.
-Anyone with the link can read sync health, attach a destination, or trigger a
-retry. This is the one thing that must be fixed before a customer who isn't us.
-
-Also missing:
+Missing:
 
 - Tickets and custom objects
 - Two-way sync (write-back to HubSpot) — needs conflict rules before it's safe

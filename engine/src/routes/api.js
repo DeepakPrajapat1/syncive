@@ -4,8 +4,14 @@ import { query } from '../db/meta.js'
 import { countRows, testConnection } from '../db/dest.js'
 import { enqueueBackfill } from '../queue/jobs.js'
 import { OBJECT_TYPES } from '../hubspot/client.js'
+import { requireAccountApi, requireOwnAccount, requireOwnSync } from '../auth.js'
 
 export const apiRouter = express.Router()
+
+// Every route below needs a signed session. Knowing an id is no longer enough:
+// the account comes from the cookie, and routes keyed by a sync id check that
+// the sync belongs to it before doing anything.
+apiRouter.use(requireAccountApi)
 
 // Express 4 does not catch rejections from async handlers — an unhandled one
 // takes the whole process down. Every handler below goes through this.
@@ -14,8 +20,9 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 // --- destinations ------------------------------------------------------------
 
 apiRouter.post('/destinations', wrap(async (req, res) => {
-  const { account_id, dsn, schema_name = 'hubspot' } = req.body || {}
-  if (!account_id || !dsn) return res.status(400).json({ error: 'account_id and dsn are required' })
+  const account_id = req.accountId
+  const { dsn, schema_name = 'hubspot' } = req.body || {}
+  if (!dsn) return res.status(400).json({ error: 'dsn is required' })
 
   const probe = await testConnection(dsn)
   if (!probe.ok) return res.status(400).json({ error: `Could not connect: ${probe.error}` })
@@ -31,9 +38,23 @@ apiRouter.post('/destinations', wrap(async (req, res) => {
 // --- syncs -------------------------------------------------------------------
 
 apiRouter.post('/syncs', wrap(async (req, res) => {
-  const { account_id, connection_id, destination_id, object_types = OBJECT_TYPES } = req.body || {}
-  if (!account_id || !connection_id || !destination_id) {
-    return res.status(400).json({ error: 'account_id, connection_id and destination_id are required' })
+  const account_id = req.accountId
+  const { connection_id, destination_id, object_types = OBJECT_TYPES } = req.body || {}
+  if (!connection_id || !destination_id) {
+    return res.status(400).json({ error: 'connection_id and destination_id are required' })
+  }
+
+  // The connection and the destination are named by the caller, so check both
+  // belong to the session's account before wiring one to the other — otherwise
+  // a signed-in customer could point their own sync at someone else's database.
+  const { rows: owned } = await query(
+    `select
+       (select count(*) from syncive.hubspot_connections where id = $1 and account_id = $3) as conns,
+       (select count(*) from syncive.destinations       where id = $2 and account_id = $3) as dests`,
+    [connection_id, destination_id, account_id]
+  )
+  if (Number(owned[0].conns) !== 1 || Number(owned[0].dests) !== 1) {
+    return res.status(404).json({ error: 'not found' })
   }
 
   const created = []
@@ -56,7 +77,7 @@ apiRouter.post('/syncs', wrap(async (req, res) => {
 
 // Which HubSpot portals this account has connected. Needed to create a sync,
 // and to show a customer what they actually authorised.
-apiRouter.get('/accounts/:accountId/connections', wrap(async (req, res) => {
+apiRouter.get('/accounts/:accountId/connections', requireOwnAccount, wrap(async (req, res) => {
   const { accountId } = req.params
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(accountId)) {
     return res.status(400).json({ error: 'account_id must be a UUID' })
@@ -71,7 +92,7 @@ apiRouter.get('/accounts/:accountId/connections', wrap(async (req, res) => {
   res.json({ connections: rows })
 }))
 
-apiRouter.get('/accounts/:accountId/health', wrap(async (req, res) => {
+apiRouter.get('/accounts/:accountId/health', requireOwnAccount, wrap(async (req, res) => {
   const { accountId } = req.params
 
   const { rows: syncs } = await query(
@@ -131,7 +152,7 @@ apiRouter.get('/accounts/:accountId/health', wrap(async (req, res) => {
   })
 }))
 
-apiRouter.get('/syncs/:syncId/rows', wrap(async (req, res) => {
+apiRouter.get('/syncs/:syncId/rows', requireOwnSync(), wrap(async (req, res) => {
   const { rows } = await query(
     `select destination_id, object_type from syncive.syncs where id = $1`,
     [req.params.syncId]
@@ -149,7 +170,7 @@ apiRouter.get('/syncs/:syncId/rows', wrap(async (req, res) => {
 // Re-run a backfill for one sync. Needed whenever a queued job died for reasons
 // outside the sync itself — a bad deploy, a queue outage — and there was no way
 // back other than editing the database by hand.
-apiRouter.post('/syncs/:syncId/backfill', wrap(async (req, res) => {
+apiRouter.post('/syncs/:syncId/backfill', requireOwnSync(), wrap(async (req, res) => {
   const { syncId } = req.params
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(syncId)) {
     return res.status(400).json({ error: 'sync id must be a UUID' })
@@ -167,7 +188,7 @@ apiRouter.post('/syncs/:syncId/backfill', wrap(async (req, res) => {
   res.json({ queued: Boolean(jobId), jobId, sync: rows[0].object_type })
 }))
 
-apiRouter.post('/syncs/:syncId/retry-failures', wrap(async (req, res) => {
+apiRouter.post('/syncs/:syncId/retry-failures', requireOwnSync(), wrap(async (req, res) => {
   const { rows } = await query(
     `select id, hubspot_id, payload from syncive.dead_letters
       where sync_id = $1 and resolved_at is null limit 500`,

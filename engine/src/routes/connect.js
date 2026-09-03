@@ -4,6 +4,7 @@ import { query } from '../db/meta.js'
 import { testConnection } from '../db/dest.js'
 import { enqueueBackfill } from '../queue/jobs.js'
 import { OBJECT_TYPES } from '../hubspot/client.js'
+import { requireAccountPage } from '../auth.js'
 
 export const connectRouter = express.Router()
 
@@ -12,8 +13,10 @@ export const connectRouter = express.Router()
 // straight to the engine over HTTPS, encrypted before it touches the database,
 // and never echoed back into the page.
 connectRouter.use(express.urlencoded({ extended: false, limit: '64kb' }))
+// Who you are comes from the session the HubSpot install minted, never from the
+// request. A form field naming someone else's account is simply not read.
+connectRouter.use(requireAccountPage)
 
-const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 const SCHEMA_OK = /^[a-z_][a-z0-9_]{0,62}$/
 
 const esc = (value) =>
@@ -25,16 +28,11 @@ const esc = (value) =>
     .replace(/'/g, '&#39;')
 
 connectRouter.get('/', (req, res) => {
-  const accountId = typeof req.query.account === 'string' ? req.query.account.trim() : ''
-  if (!accountId) return res.type('html').send(renderAsk())
-  if (!UUID.test(accountId)) {
-    return res.status(400).type('html').send(renderAsk("That doesn't look like an account id — it should be a UUID."))
-  }
-  res.type('html').send(renderForm({ accountId }))
+  res.type('html').send(renderForm({}))
 })
 
 connectRouter.post('/', async (req, res) => {
-  const accountId = String(req.body.account || '').trim()
+  const accountId = req.accountId
   const dsn = String(req.body.dsn || '').trim()
   const schema = String(req.body.schema || 'hubspot').trim().toLowerCase()
   const chosen = OBJECT_TYPES.filter((t) => req.body[`obj_${t}`])
@@ -47,10 +45,9 @@ connectRouter.post('/', async (req, res) => {
     return out.replace(/\/\/[^\s/@]*:[^\s/@]*@/g, '//[redacted]@')
   }
   const fail = (message, status = 400) =>
-    res.status(status).type('html').send(renderForm({ accountId, schema, chosen, error: redact(message) }))
+    res.status(status).type('html').send(renderForm({ schema, chosen, error: redact(message) }))
 
   try {
-    if (!UUID.test(accountId)) return fail('Account id must be a UUID.')
     if (!dsn) return fail('Paste your Postgres connection string.')
     if (!SCHEMA_OK.test(schema)) {
       return fail('Schema name must be lowercase letters, digits and underscores, starting with a letter.')
@@ -103,7 +100,7 @@ connectRouter.post('/', async (req, res) => {
     }
 
     res.type('html').send(
-      renderDone({ accountId, portalId: conns[0].portal_id, database: probe.database, schema, created })
+      renderDone({ portalId: conns[0].portal_id, database: probe.database, schema, created })
     )
   } catch (err) {
     // Never let the connection string reach a log line or the page.
@@ -151,22 +148,7 @@ const HEAD = `<!doctype html>
          border-top:1px solid var(--border);padding-top:.9rem}
 </style>`
 
-const renderAsk = (message) => `${HEAD}
-<div class="wrap">
-  <h1>Connect your database</h1>
-  <p class="sub">Enter the account id you got when you installed the HubSpot app.</p>
-  ${message ? `<div class="card err">${esc(message)}</div>` : ''}
-  <form method="get" class="card">
-    <div class="field">
-      <label for="a">Account id</label>
-      <input id="a" name="account" type="text" autocomplete="off" spellcheck="false"
-             placeholder="00000000-0000-0000-0000-000000000000" required>
-    </div>
-    <button type="submit">Continue</button>
-  </form>
-</div>`
-
-function renderForm({ accountId, schema = 'hubspot', chosen = OBJECT_TYPES, error }) {
+function renderForm({ schema = 'hubspot', chosen = OBJECT_TYPES, error }) {
   const checks = OBJECT_TYPES.map(
     (t) => `<label><input type="checkbox" name="obj_${esc(t)}" value="1"${
       chosen.includes(t) ? ' checked' : ''
@@ -179,7 +161,6 @@ function renderForm({ accountId, schema = 'hubspot', chosen = OBJECT_TYPES, erro
   <p class="sub">Syncive will mirror your HubSpot records into a schema in your own Postgres.</p>
   ${error ? `<div class="card err">${esc(error)}</div>` : ''}
   <form method="post" class="card" autocomplete="off">
-    <input type="hidden" name="account" value="${esc(accountId)}">
     <div class="field">
       <label for="dsn">Postgres connection string</label>
       <input id="dsn" name="dsn" type="password" required spellcheck="false"
@@ -219,14 +200,13 @@ function renderForm({ accountId, schema = 'hubspot', chosen = OBJECT_TYPES, erro
     })();
   </script>
   <footer>
-    This link contains your account id — treat it like a password. Syncive needs
-    write access to create the schema and its tables; it never reads anything else
-    in your database.
+    Syncive needs write access to create the schema and its tables; it never reads
+    anything else in your database.
   </footer>
 </div>`
 }
 
-const renderDone = ({ accountId, portalId, database, schema, created }) => `${HEAD}
+const renderDone = ({ portalId, database, schema, created }) => `${HEAD}
 <div class="wrap">
   <h1>Connected</h1>
   <p class="sub">Portal ${esc(portalId)} is now syncing into <code>${esc(database)}</code>.</p>
@@ -236,6 +216,6 @@ const renderDone = ({ accountId, portalId, database, schema, created }) => `${HE
   </div>
   <div class="card">
     <p style="margin:0">First rows land within a minute or two. Watch it here:</p>
-    <p style="margin:.5rem 0 0"><a href="/dashboard?account=${esc(accountId)}">Open the sync dashboard &rarr;</a></p>
+    <p style="margin:.5rem 0 0"><a href="/dashboard">Open the sync dashboard &rarr;</a></p>
   </div>
 </div>`

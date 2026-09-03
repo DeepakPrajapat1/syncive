@@ -1,17 +1,16 @@
 import express from 'express'
 
+import { requireAccountPage } from '../auth.js'
+
 export const dashboardRouter = express.Router()
 
 // The dashboard is served by the engine itself: same origin as /api, so no CORS,
 // no second deploy target, and no build step. One HTML string, everything inline.
-dashboardRouter.get('/', (req, res) => {
-  const accountId = typeof req.query.account === 'string' ? req.query.account.trim() : ''
-  // The health API casts the id straight to uuid, so a malformed id would only
-  // produce a 500. Catch it here and re-ask instead of polling a doomed URL.
-  const valid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(accountId)
-  if (!accountId) return res.type('html').send(renderPrompt())
-  if (!valid) return res.status(400).type('html').send(renderPrompt("That doesn't look like an account id — it should be a UUID."))
-  res.type('html').send(renderDashboard(accountId))
+// The account comes from the session cookie, so a dashboard link is no longer a
+// credential: pasting this URL to someone shows them their own account or the
+// sign-in page, never yours.
+dashboardRouter.get('/', requireAccountPage, (req, res) => {
+  res.type('html').send(renderDashboard(req.accountId))
 })
 
 // Every value that reaches the page goes through this. Object type names, error
@@ -92,26 +91,8 @@ const HEAD = `<!doctype html>
 const jsonForScript = (value) =>
   JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026')
 
-const NOTE = `<p class="note">This link contains your account id and is the only thing
-  guarding these numbers — treat it like a password and don't share or post it.
-  Syncive never stores your CRM records; this page reads sync state and logs only.</p>`
-
-const renderPrompt = (message) => `${HEAD}
-<div class="wrap">
-  <header><h1>Sync health</h1></header>
-  <div class="card">
-    ${message ? `<p class="sub" style="color:var(--bad)">${esc(message)}</p>` : ''}
-    <p class="sub">Enter the account id you want to inspect. It's the <code>account_id</code>
-      you used when you installed the HubSpot app.</p>
-    <form method="get" action="">
-      <label for="account">Account id</label>
-      <input id="account" name="account" autocomplete="off" spellcheck="false"
-             placeholder="00000000-0000-0000-0000-000000000000" required>
-      <div class="actions"><button type="submit">Open dashboard</button></div>
-    </form>
-  </div>
-  ${NOTE}
-</div>`
+const NOTE = `<p class="note">Signed in through your HubSpot install. Syncive never
+  stores your CRM records; this page reads sync state and logs only.</p>`
 
 const renderDashboard = (accountId) => `${HEAD}
 <div class="wrap">

@@ -73,6 +73,10 @@ const key = /^[0-9a-fA-F]{64}$/.test(rawKey)
   ? Buffer.from(rawKey, 'hex')
   : crypto.createHash('sha256').update(rawKey, 'utf8').digest()
 
+// Session cookies are signed, not encrypted, and reusing the encryption key for
+// a second purpose is how one weakness becomes two. Derive a separate secret.
+export const sessionSecret = crypto.createHmac('sha256', key).update('syncive:session:v1').digest()
+
 export function encrypt(plaintext) {
   const iv = crypto.randomBytes(12)
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)
