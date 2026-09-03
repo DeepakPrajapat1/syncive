@@ -17,7 +17,9 @@ The landing page lives in the `syncive` repo. This is the backend.
 | Backfill | `src/hubspot/backfill.js` | Chunked and checkpointed: a crash costs one page, not the whole run |
 | Webhook ingest | `src/routes/webhooks.js` | Verifies v3 signature, acks in milliseconds, queues the work |
 | Reconciliation | `src/reconcile.js` | Hourly re-pull of recently-changed records — the safety net under webhooks |
-| Health API | `src/routes/api.js` | Feeds the dashboard: per-sync status, 24h counts, unresolved failures |
+| Health API | `src/routes/api.js` | Per-sync status, 24h counts, unresolved failures |
+| Setup page | `src/routes/connect.js` | Customer pastes their Postgres URL; connection is tested before anything is written |
+| Sync dashboard | `src/routes/dashboard.js` | The health API rendered — staleness and failures visible at a glance |
 | Dead letters | `sql/meta.sql` | Nothing fails silently; every undelivered record is retryable |
 
 **We never store customer CRM data.** Records flow HubSpot → worker → their database.
@@ -38,6 +40,10 @@ HubSpot ──webhook──►  server.js  ──►  pg-boss queue  ──►  
 
 Two processes: `npm start` (HTTP) and `npm run worker` (jobs). They share one
 Postgres — ours — and can scale independently.
+
+On a single-service host (the Render free tier we deploy to) set
+`RUN_WORKER_IN_PROCESS=true` and the web process runs the workers itself. Move
+them to their own service the moment volume justifies it.
 
 ---
 
@@ -140,10 +146,37 @@ stay awake.
 
 ---
 
-## Not built yet
+## Deployed
 
-- Dashboard UI (the `/health` API is ready for it)
+| Thing | Where |
+|---|---|
+| Engine | `https://syncive-engine.onrender.com` (Render, free tier) |
+| Metadata DB | Supabase Postgres |
+| HubSpot app | App ID 51657318, `syncive` project on developer portal 23848834 |
+| Landing page | Vercel, `syncive` repo root |
+
+Customer flow, end to end:
+
+1. `/oauth/install?account_id=<uuid>` — HubSpot install
+2. `/connect?account=<uuid>` — paste a Postgres URL, pick objects, backfill starts
+3. `/dashboard?account=<uuid>` — watch it run
+
+The free tier sleeps after 15 minutes idle and takes ~50s to wake. HubSpot retries
+webhooks and the hourly reconcile catches anything missed, so nothing is lost — but
+a paid instance is the first thing to buy when a real customer shows up.
+
+---
+
+## Known gaps
+
+**No authentication.** Every route is guarded only by knowing the account UUID.
+Anyone with the link can read sync health, attach a destination, or trigger a
+retry. This is the one thing that must be fixed before a customer who isn't us.
+
+Also missing:
+
 - Tickets and custom objects
 - Two-way sync (write-back to HubSpot) — needs conflict rules before it's safe
-- Slack alerting on `degraded`
+- Alerting on `degraded` (email or Slack) — the dashboard only helps if someone looks
 - Billing
+- Auto-deploy from GitHub (Render is connected by public URL, so deploys are manual)
