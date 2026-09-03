@@ -52,7 +52,7 @@ export async function getDestPool(destinationId) {
 
   const pool = new pg.Pool({
     connectionString: dsn,
-    max: 4,
+    max: 3,
     connectionTimeoutMillis: 10_000,
     idleTimeoutMillis: 20_000,
     ...(ssl === undefined ? {} : { ssl }),

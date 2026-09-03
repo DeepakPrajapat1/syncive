@@ -15,7 +15,9 @@ let boss
 
 export async function getBoss() {
   if (boss) return boss
-  boss = new PgBoss({ connectionString: config.metaDatabaseUrl, schema: 'syncive_queue' })
+  // pg-boss keeps its own pool. Left at its default it alone can eat most of a
+  // pooler's per-project connection budget, starving the very jobs it dispatches.
+  boss = new PgBoss({ connectionString: config.metaDatabaseUrl, schema: 'syncive_queue', max: 3 })
   boss.on('error', (err) => console.error('[pg-boss]', err.message))
   await boss.start()
   return boss
@@ -34,12 +36,14 @@ export async function enqueueBackfill(syncId, { force = false } = {}) {
   return jobId
 }
 
+export const WEBHOOK_RETRY_LIMIT = 5
+
 export async function enqueueWebhookEvents(events) {
   const b = await getBoss()
   return Promise.all(
     events.map((event) =>
       b.send(QUEUES.webhook, event, {
-        retryLimit: 5,
+        retryLimit: WEBHOOK_RETRY_LIMIT,
         retryDelay: 10,
         retryBackoff: true,
       })
@@ -75,11 +79,19 @@ export async function startWorkers() {
     }
   })
 
-  await b.work(QUEUES.webhook, { teamSize: 4, teamConcurrency: 2 }, async (arg) => {
+  // A 500-row CSV import fires 500 webhooks at once. Each one needs a meta client
+  // and a destination client, so a wide worker pool doesn't go faster — it just
+  // exhausts the connection budget and fails jobs that would have succeeded.
+  await b.work(QUEUES.webhook, { teamSize: 2, teamConcurrency: 1 }, async (arg) => {
+    const job = jobOf(arg)
+    // Only park a payload for manual retry once pg-boss has given up on it.
+    // Dead-lettering on the first error turns every transient blip into an entry
+    // in a queue a human has to drain by hand.
+    const isFinalAttempt = (job.retryCount ?? 0) >= WEBHOOK_RETRY_LIMIT
     try {
-      return await applyEvent(jobOf(arg).data)
+      return await applyEvent(job.data, { isFinalAttempt })
     } catch (err) {
-      console.error('[webhook] FAILED:', err.message)
+      console.error(`[webhook] FAILED (attempt ${(job.retryCount ?? 0) + 1}):`, err.message)
       throw err
     }
   })

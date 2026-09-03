@@ -3,7 +3,11 @@ import { config } from '../config.js'
 
 export const pool = new pg.Pool({
   connectionString: config.metaDatabaseUrl,
-  max: 8,
+  // Managed Postgres poolers cap total client connections per project (Supabase's
+  // session pooler allows 15). Meta pool + pg-boss + one pool per destination all
+  // draw from that same budget, so every pool here is deliberately small: running
+  // out of connections fails jobs that had nothing wrong with them.
+  max: 4,
   idleTimeoutMillis: 30_000,
 })
 

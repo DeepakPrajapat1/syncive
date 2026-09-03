@@ -59,7 +59,11 @@ export function dedupe(events) {
   return [...seen.values()]
 }
 
-export async function applyEvent(event) {
+// `isFinalAttempt` comes from the queue: false while pg-boss still has retries
+// left. A failure that will be retried is logged but not dead-lettered, so the
+// dead-letter table means "a human needs to look at this", not "something was
+// briefly busy".
+export async function applyEvent(event, { isFinalAttempt = true } = {}) {
   // A portal can legitimately be connected by more than one account — an agency and
   // their client, say — so fan the event out to every sync watching it.
   const { rows: syncs } = await query(
@@ -73,14 +77,14 @@ export async function applyEvent(event) {
   if (!syncs.length) return { skipped: 'no matching sync' }
 
   const outcomes = []
-  for (const sync of syncs) outcomes.push(await applyEventToSync(event, sync))
+  for (const sync of syncs) outcomes.push(await applyEventToSync(event, sync, isFinalAttempt))
 
   const failure = outcomes.find((o) => o.error)
   if (failure) throw new Error(failure.error)
   return { applied: true, syncs: outcomes.length }
 }
 
-async function applyEventToSync(event, sync) {
+async function applyEventToSync(event, sync, isFinalAttempt) {
   try {
     if (event.isDelete) {
       await markDeleted(sync.destination_id, sync.object_type, event.hubspotId)
@@ -107,9 +111,10 @@ async function applyEventToSync(event, sync) {
     await logEvent(sync.id, { kind: 'webhook', status: 'ok', recordCount: 1, hubspotId: event.hubspotId })
     return { syncId: sync.id, applied: true }
   } catch (err) {
-    // Record it, park the payload for retry, and let the other syncs still run.
+    // Record it and let the other syncs still run. Park the payload only once
+    // the queue is out of retries.
     await logEvent(sync.id, { kind: 'webhook', status: 'failed', hubspotId: event.hubspotId, message: err.message })
-    await deadLetter(sync.id, event.hubspotId, event, err.message)
+    if (isFinalAttempt) await deadLetter(sync.id, event.hubspotId, event, err.message)
     return { syncId: sync.id, error: err.message }
   }
 }
