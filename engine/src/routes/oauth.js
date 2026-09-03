@@ -3,7 +3,7 @@ import express from 'express'
 import { buildInstallUrl, exchangeCode, saveConnection, tokenInfo, verifyState } from '../hubspot/oauth.js'
 import { query } from '../db/meta.js'
 import { requireHubspot } from '../config.js'
-import { accountOf, issueSession } from '../auth.js'
+import { accountOf, clearSession, issueSession } from '../auth.js'
 
 export const oauthRouter = express.Router()
 
@@ -17,6 +17,14 @@ oauthRouter.get('/install', async (req, res) => {
   const signedIn = accountOf(req)
   const accountId = signedIn || req.query.account_id || crypto.randomUUID()
   res.redirect(buildInstallUrl(accountId, { provisional: !signedIn && !req.query.account_id }))
+})
+
+// Drop the session. Needed on a shared machine, and needed by us: while a stale
+// cookie is present the install flow treats you as signed in and will not adopt
+// the account that already owns the portal.
+oauthRouter.get('/signout', (req, res) => {
+  clearSession(res)
+  res.redirect('/oauth/install')
 })
 
 // Step 2 — HubSpot sends them back with a code.
