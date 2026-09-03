@@ -60,15 +60,28 @@ export async function startWorkers() {
     const job = jobOf(arg)
     const { syncId } = job.data
     console.log(`[backfill] ${syncId} starting chunk`)
-    const result = await runBackfillChunk(syncId)
-    console.log(`[backfill] ${syncId} chunk done:`, JSON.stringify(result))
-    // Not finished? Queue the next chunk. Backfills survive restarts this way.
-    if (!result.done) await enqueueBackfill(syncId)
-    return result
+    try {
+      const result = await runBackfillChunk(syncId)
+      console.log(`[backfill] ${syncId} chunk done:`, JSON.stringify(result))
+      // Not finished? Queue the next chunk. Backfills survive restarts this way.
+      if (!result.done) await enqueueBackfill(syncId)
+      return result
+    } catch (err) {
+      // pg-boss records the failure but shows it nowhere we look, so a job that
+      // dies here just repeats forever, silently. Say what happened.
+      console.error(`[backfill] ${syncId} FAILED:`, err.message)
+      if (err.stack) console.error(err.stack.split('\n').slice(1, 4).join('\n'))
+      throw err
+    }
   })
 
   await b.work(QUEUES.webhook, { teamSize: 4, teamConcurrency: 2 }, async (arg) => {
-    return applyEvent(jobOf(arg).data)
+    try {
+      return await applyEvent(jobOf(arg).data)
+    } catch (err) {
+      console.error('[webhook] FAILED:', err.message)
+      throw err
+    }
   })
 
   await b.work(QUEUES.reconcile, async () => reconcileAll())
