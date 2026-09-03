@@ -21,9 +21,17 @@ export async function getBoss() {
   return boss
 }
 
-export async function enqueueBackfill(syncId) {
+// The singleton key stops a chain of chunk jobs from fanning out. But it also
+// means send() quietly returns null when an older job for the same sync is still
+// sitting in the queue — including a dead one nobody will ever run. `force`
+// skips the key, which is what a human asking for a re-sync means.
+export async function enqueueBackfill(syncId, { force = false } = {}) {
   const b = await getBoss()
-  return b.send(QUEUES.backfill, { syncId }, { singletonKey: `backfill:${syncId}`, retryLimit: 3 })
+  const opts = { retryLimit: 3 }
+  if (!force) opts.singletonKey = `backfill:${syncId}`
+  const jobId = await b.send(QUEUES.backfill, { syncId }, opts)
+  if (!jobId) console.warn(`[queue] backfill for ${syncId} collapsed into an existing job`)
+  return jobId
 }
 
 export async function enqueueWebhookEvents(events) {
@@ -51,7 +59,9 @@ export async function startWorkers() {
   await b.work(QUEUES.backfill, { teamSize: 2, teamConcurrency: 1 }, async (arg) => {
     const job = jobOf(arg)
     const { syncId } = job.data
+    console.log(`[backfill] ${syncId} starting chunk`)
     const result = await runBackfillChunk(syncId)
+    console.log(`[backfill] ${syncId} chunk done:`, JSON.stringify(result))
     // Not finished? Queue the next chunk. Backfills survive restarts this way.
     if (!result.done) await enqueueBackfill(syncId)
     return result

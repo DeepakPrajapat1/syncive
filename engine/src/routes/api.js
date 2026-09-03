@@ -163,8 +163,8 @@ apiRouter.post('/syncs/:syncId/backfill', wrap(async (req, res) => {
 
   // Start from the top: clear the checkpoint so this is a full re-read.
   await query(`update syncive.syncs set state = 'backfilling', backfill_cursor = null where id = $1`, [syncId])
-  await enqueueBackfill(syncId)
-  res.json({ queued: true, sync: rows[0].object_type })
+  const jobId = await enqueueBackfill(syncId, { force: true })
+  res.json({ queued: Boolean(jobId), jobId, sync: rows[0].object_type })
 }))
 
 apiRouter.post('/syncs/:syncId/retry-failures', wrap(async (req, res) => {
