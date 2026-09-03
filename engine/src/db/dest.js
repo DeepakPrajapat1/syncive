@@ -195,7 +195,27 @@ const ident = (name) => `"${String(name).replace(/"/g, '""')}"`
 
 // ---- writes -----------------------------------------------------------------
 
+// Only the backfill provisioned the table. Webhooks and reconciliation wrote
+// straight into it, so the first record carrying a property HubSpot added after
+// setup failed with 'column "..." does not exist' — schema drift breaking the
+// two paths whose whole job is to keep up with schema drift.
+//
+// Rather than pay for an information_schema round trip on every single write,
+// take the failure as the signal: reconcile the columns, then retry once.
+const MISSING_COLUMN = /column "([^"]+)" of relation "([^"]+)" does not exist/i
+
 export async function upsertRecords(destinationId, objectType, properties, records) {
+  try {
+    return await writeRecords(destinationId, objectType, properties, records)
+  } catch (err) {
+    if (!MISSING_COLUMN.test(err.message)) throw err
+    console.warn(`[dest ${destinationId}] ${err.message} — provisioning and retrying`)
+    await provisionTable(destinationId, objectType, properties)
+    return writeRecords(destinationId, objectType, properties, records)
+  }
+}
+
+async function writeRecords(destinationId, objectType, properties, records) {
   if (!records.length) return 0
   const { pool, schema } = await getDestPool(destinationId)
   const table = `${schema}.${sanitize(objectType)}`
