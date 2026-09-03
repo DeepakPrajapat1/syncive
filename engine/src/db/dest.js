@@ -112,6 +112,24 @@ export const columnFor = (prop) => ({
   type: TYPE_MAP[prop.type] || 'text',
 })
 
+// Columns this table owns. HubSpot ships a property literally called
+// hs_object_id, and two different property names can sanitize to the same
+// column, so a naive properties -> columns map produces duplicates and Postgres
+// rejects the whole insert. Provisioning and writing must agree on one list.
+const RESERVED = new Set(['hs_object_id', '_raw', '_synced_at', '_deleted'])
+
+export function mappableColumns(properties) {
+  const seen = new Set()
+  const out = []
+  for (const prop of properties) {
+    const col = columnFor(prop)
+    if (RESERVED.has(col.name) || col.name.startsWith('_') || seen.has(col.name)) continue
+    seen.add(col.name)
+    out.push({ ...col, property: prop.name })
+  }
+  return out
+}
+
 // Postgres folds unquoted identifiers to lowercase and caps them at 63 bytes.
 function sanitize(name) {
   return name
@@ -146,9 +164,8 @@ export async function provisionTable(destinationId, objectType, properties) {
     )
     const have = new Set(existing.map((r) => r.column_name))
 
-    for (const prop of properties) {
-      const col = columnFor(prop)
-      if (have.has(col.name) || col.name.startsWith('_') || col.name === 'hs_object_id') continue
+    for (const col of mappableColumns(properties)) {
+      if (have.has(col.name)) continue
       await client.query(`alter table ${table} add column if not exists ${ident(col.name)} ${col.type}`)
     }
 
@@ -170,7 +187,7 @@ export async function upsertRecords(destinationId, objectType, properties, recor
   if (!records.length) return 0
   const { pool, schema } = await getDestPool(destinationId)
   const table = `${schema}.${sanitize(objectType)}`
-  const cols = properties.map(columnFor)
+  const cols = mappableColumns(properties)
 
   const columnNames = ['hs_object_id', ...cols.map((c) => c.name), '_raw', '_synced_at', '_deleted']
   const client = await pool.connect()
@@ -180,7 +197,7 @@ export async function upsertRecords(destinationId, objectType, properties, recor
     for (const rec of records) {
       const values = [
         rec.id,
-        ...cols.map((c, i) => coerce(rec.properties?.[properties[i].name], c.type)),
+        ...cols.map((c) => coerce(rec.properties?.[c.property], c.type)),
         JSON.stringify(rec),
         new Date(),
         false,

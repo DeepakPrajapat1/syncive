@@ -174,6 +174,34 @@ await check('upserts records with type coercion', async () => {
   await p.end()
 })
 
+// HubSpot's own property list includes hs_object_id, which is also our primary
+// key column — and two messy property names can sanitize to the same column.
+// Either one used to make Postgres reject the whole insert. This is exactly the
+// shape that broke the first real contacts backfill.
+await check('handles properties that collide with our own columns', async () => {
+  const colliding = [
+    { name: 'hs_object_id', type: 'string' },   // same name as our primary key
+    { name: 'email', type: 'string' },
+    { name: 'Weird Prop-Name!', type: 'string' },
+    { name: 'weird_prop_name?', type: 'string' }, // sanitizes to the same column
+    { name: '_synced_at', type: 'datetime' },   // one of ours
+  ]
+  await provisionTable(destinationId, 'contacts', colliding)
+  const written = await upsertRecords(destinationId, 'contacts', colliding, [
+    { id: '900', properties: { hs_object_id: '900', email: 'collide@x.com', 'Weird Prop-Name!': 'kept' } },
+  ])
+  assert.equal(written, 1, 'a colliding property list must still write')
+
+  const pg = (await import('pg')).default
+  const p = new pg.Pool({ connectionString: DEST_DSN })
+  const { rows } = await p.query(`select hs_object_id, email from hubspot.contacts where hs_object_id='900'`)
+  assert.equal(rows[0].email, 'collide@x.com')
+  assert.equal(rows[0].hs_object_id, '900', 'the id column still holds the record id')
+  // Later tests assert on row counts, so leave the table as we found it.
+  await p.query(`delete from hubspot.contacts where hs_object_id='900'`)
+  await p.end()
+})
+
 await check('upsert is idempotent (re-sync same record)', async () => {
   await upsertRecords(destinationId, 'contacts', PROPS, [
     { id: '1', properties: { email: 'updated@b.com', firstname: 'Ada L' } },
