@@ -196,8 +196,28 @@ function renderForm({ accountId, schema = 'hubspot', chosen = OBJECT_TYPES, erro
       <label>Objects to sync</label>
       <div class="objs">${checks}</div>
     </div>
-    <button type="submit">Connect and start backfill</button>
+    <button type="submit" id="go">Connect and start backfill</button>
+    <p class="hint" id="status" hidden>Testing the connection and provisioning tables&hellip;
+       this can take up to a minute the first time.</p>
   </form>
+  <script>
+    // A slow first request (cold start plus a connection probe) looks like a dead
+    // button, so people click it again — and used to get a second destination.
+    // The server tolerates that now; this stops it happening in the first place.
+    (function () {
+      var form = document.currentScript.previousElementSibling;
+      var go = form.querySelector('#go');
+      var status = form.querySelector('#status');
+      form.addEventListener('submit', function (e) {
+        if (form.dataset.sent) { e.preventDefault(); return; }
+        form.dataset.sent = '1';
+        go.textContent = 'Connecting\u2026';
+        status.hidden = false;
+        // Disable after the form has been serialised, never before.
+        setTimeout(function () { go.disabled = true; }, 0);
+      });
+    })();
+  </script>
   <footer>
     This link contains your account id — treat it like a password. Syncive needs
     write access to create the schema and its tables; it never reads anything else
