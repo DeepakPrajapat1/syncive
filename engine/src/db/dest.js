@@ -64,6 +64,18 @@ export async function getDestPool(destinationId) {
   return entry
 }
 
+// Removing a destination has to hand its connections back. The pool cache would
+// otherwise keep a pool open to a destination nobody can reach any more, which
+// on a pooler with a fixed client budget is a slow leak that ends as
+// EMAXCONNSESSION somewhere unrelated.
+export function closeDestPool(destinationId) {
+  const entry = poolCache.get(destinationId)
+  if (!entry) return false
+  poolCache.delete(destinationId)
+  entry.pool.end().catch((err) => console.error(`[dest ${destinationId}] close failed`, err.message))
+  return true
+}
+
 export async function testConnection(dsn) {
   let ssl
   try {

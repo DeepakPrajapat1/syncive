@@ -104,6 +104,7 @@ const renderDashboard = (accountId) => `${HEAD}
   <div id="banner" class="card banner"><strong>Loading…</strong>
     <span class="sub">Fetching current sync state.</span></div>
   <div id="syncs"></div>
+  <div id="destinations"></div>
   ${NOTE}
 </div>
 <script>
@@ -230,6 +231,81 @@ const renderDashboard = (accountId) => `${HEAD}
     }
   }
 
+  var destBox = document.getElementById('destinations');
+
+  // A mis-click during setup can leave a second destination writing the same
+  // rows into the same schema — three times the HubSpot calls and three times
+  // the database connections, for one copy of the data. Until you can see the
+  // destinations you cannot tell that is what is happening.
+  function renderDestinations(list){
+    if(list.length < 2){ destBox.innerHTML = ''; return; }
+
+    var html = '<div class="card"><div class="row"><span class="name">Destinations</span>' +
+      '<span class="pill bad">' + list.length + ' configured</span></div>' +
+      '<p class="sub">More than one destination means every HubSpot change is written ' +
+      'more than once. Removing one stops Syncive writing through it — your own tables ' +
+      'and rows are left exactly as they are.</p>';
+
+    for(var i=0;i<list.length;i++){
+      var d = list[i];
+      var syncs = d.syncs || [];
+      var live = 0;
+      for(var k=0;k<syncs.length;k++) if(syncs[k].last_success_at) live++;
+      html += '<div class="row" data-dest="' + esc(d.id) + '">';
+      html += '<span><code>' + esc(d.schema_name) + '</code> ' +
+              '<span class="sub">' + esc(d.id.slice(0,8)) + '\u2026 &middot; ' +
+              syncs.length + ' sync' + (syncs.length === 1 ? '' : 's') + ' &middot; ' +
+              (live ? live + ' with data' : 'never synced') + '</span></span>';
+      html += '<span><button class="ghost remove">Remove</button> ' +
+              '<span class="result"></span></span></div>';
+    }
+    destBox.innerHTML = html + '</div>';
+
+    var rows = destBox.querySelectorAll('[data-dest]');
+    for(var r=0;r<rows.length;r++){
+      (function(row){
+        var id = row.getAttribute('data-dest');
+        var out = row.querySelector('.result');
+        var btn = row.querySelector('.remove');
+        btn.addEventListener('click', function(){
+          // Two clicks, not a confirm() — a modal dialog blocks the page and is
+          // the one thing this dashboard must never do mid-refresh.
+          if(btn.dataset.armed !== '1'){
+            btn.dataset.armed = '1';
+            btn.textContent = 'Click again to remove';
+            out.className = 'result'; out.textContent = 'This deletes its syncs and their history.';
+            setTimeout(function(){
+              if(btn.dataset.armed !== '1') return;
+              btn.dataset.armed = ''; btn.textContent = 'Remove';
+              out.textContent = '';
+            }, 6000);
+            return;
+          }
+          btn.dataset.armed = ''; btn.disabled = true; btn.textContent = 'Removing\u2026';
+          fetch('/api/destinations/' + encodeURIComponent(id), {method:'DELETE'})
+            .then(function(res){ return res.json().then(function(j){ return {s:res.status,j:j}; }); })
+            .then(function(res){
+              if(res.s >= 400) throw new Error(res.j && res.j.error || ('HTTP ' + res.s));
+              out.className = 'result ok';
+              out.textContent = 'Removed, with ' + Number(res.j.syncsRemoved || 0) + ' sync(s).';
+              load();
+            })
+            .catch(function(err){
+              out.className = 'result bad'; out.textContent = String(err.message || err);
+              btn.disabled = false; btn.textContent = 'Remove';
+            });
+        });
+      })(rows[r]);
+    }
+  }
+
+  function loadDestinations(){
+    fetch('/api/destinations', {headers:{accept:'application/json'}})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(j){ if(j) renderDestinations(j.destinations || []); })
+      .catch(function(){ /* the sync cards are the page; this section is a bonus */ });
+  }
+
   function render(data){
     var syncs = (data && data.syncs) || [];
     updated.textContent = 'Updated ' + new Date().toLocaleTimeString() + ' — refreshes every 30s';
@@ -287,6 +363,8 @@ const renderDashboard = (accountId) => `${HEAD}
   }
 
   load();
+  loadDestinations();
   setInterval(load, 30000);
+  setInterval(loadDestinations, 30000);
 })();
 </script>`

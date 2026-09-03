@@ -1,7 +1,7 @@
 import express from 'express'
 import { encrypt } from '../config.js'
 import { query } from '../db/meta.js'
-import { countRows, testConnection } from '../db/dest.js'
+import { closeDestPool, countRows, testConnection } from '../db/dest.js'
 import { enqueueBackfill } from '../queue/jobs.js'
 import { OBJECT_TYPES } from '../hubspot/client.js'
 import { requireAccountApi, requireOwnAccount, requireOwnSync } from '../auth.js'
@@ -33,6 +33,65 @@ apiRouter.post('/destinations', wrap(async (req, res) => {
     [account_id, encrypt(dsn), schema_name]
   )
   res.json({ destination: rows[0], database: probe.database, server: probe.version })
+}))
+
+// Every destination this account has, with the syncs hanging off each one. A
+// mis-click during setup can leave a second destination quietly writing the same
+// rows into the same schema, and until you can see them you cannot tell.
+apiRouter.get('/destinations', wrap(async (req, res) => {
+  const { rows } = await query(
+    `select d.id, d.schema_name, d.status, d.created_at,
+            coalesce(json_agg(json_build_object(
+              'id', s.id, 'object_type', s.object_type, 'state', s.state,
+              'last_success_at', s.last_success_at
+            ) order by s.object_type) filter (where s.id is not null), '[]') as syncs
+       from syncive.destinations d
+       left join syncive.syncs s on s.destination_id = d.id
+      where d.account_id = $1
+      group by d.id
+      order by d.created_at`,
+    [req.accountId]
+  )
+  res.json({ destinations: rows })
+}))
+
+// Remove a destination and the syncs that write through it. Nothing in the
+// customer's own database is touched — their tables and rows stay exactly where
+// they are; this only stops Syncive writing to them.
+apiRouter.delete('/destinations/:destinationId', wrap(async (req, res) => {
+  const { destinationId } = req.params
+
+  const { rows: found } = await query(
+    `select d.id, d.schema_name, count(s.id)::int as syncs
+       from syncive.destinations d
+       left join syncive.syncs s on s.destination_id = d.id
+      where d.id = $1 and d.account_id = $2
+      group by d.id`,
+    [destinationId, req.accountId]
+  )
+  if (!found.length) return res.status(404).json({ error: 'not found' })
+
+  // Refusing to delete the last one is not paternalism: an account with zero
+  // destinations has no way back except support, and the mistake this endpoint
+  // exists to fix is always "I have one too many".
+  const { rows: total } = await query(
+    `select count(*)::int as n from syncive.destinations where account_id = $1`,
+    [req.accountId]
+  )
+  if (total[0].n <= 1) {
+    return res.status(409).json({
+      error: 'This is your only destination — connect another one before removing it.',
+    })
+  }
+
+  // syncs, sync_events and dead_letters all cascade from destinations.
+  await query(`delete from syncive.destinations where id = $1 and account_id = $2`, [
+    destinationId,
+    req.accountId,
+  ])
+  closeDestPool(destinationId)
+
+  res.json({ removed: found[0].id, schema: found[0].schema_name, syncsRemoved: found[0].syncs })
 }))
 
 // --- syncs -------------------------------------------------------------------
