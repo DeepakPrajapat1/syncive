@@ -5,10 +5,14 @@ import { query, tx } from '../db/meta.js'
 const API = 'https://api.hubapi.com'
 
 // Short-lived signed state, so the callback can't be replayed or forged.
-export function buildInstallUrl(accountId) {
+// `provisional` means we invented this account id because nobody was signed in.
+// The callback uses it to decide whether an already-connected portal should be
+// adopted (a returning customer reinstalling) or kept separate (a signed-in
+// customer deliberately adding a portal).
+export function buildInstallUrl(accountId, { provisional = false } = {}) {
   const nonce = crypto.randomBytes(16).toString('hex')
   const issued = Date.now()
-  const payload = `${accountId}.${issued}.${nonce}`
+  const payload = `${accountId}.${issued}.${nonce}.${provisional ? 'p' : 'f'}`
   const sig = crypto.createHmac('sha256', config.hubspot.clientSecret).update(payload).digest('hex')
   const state = Buffer.from(`${payload}.${sig}`).toString('base64url')
 
@@ -23,10 +27,10 @@ export function buildInstallUrl(accountId) {
 
 export function verifyState(state) {
   const raw = Buffer.from(String(state), 'base64url').toString('utf8')
-  const [accountId, issued, nonce, sig] = raw.split('.')
+  const [accountId, issued, nonce, provisional, sig] = raw.split('.')
   const expected = crypto
     .createHmac('sha256', config.hubspot.clientSecret)
-    .update(`${accountId}.${issued}.${nonce}`)
+    .update(`${accountId}.${issued}.${nonce}.${provisional}`)
     .digest('hex')
   const ok =
     sig &&
@@ -34,7 +38,7 @@ export function verifyState(state) {
     crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))
   if (!ok) throw new Error('Invalid OAuth state signature')
   if (Date.now() - Number(issued) > 10 * 60_000) throw new Error('OAuth state expired')
-  return accountId
+  return { accountId, provisional: provisional === 'p' }
 }
 
 export async function exchangeCode(code) {
