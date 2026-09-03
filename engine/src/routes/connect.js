@@ -70,11 +70,23 @@ connectRouter.post('/', async (req, res) => {
       return fail('No HubSpot portal is connected for this account yet — install the app first.')
     }
 
-    const { rows: dests } = await query(
-      `insert into syncive.destinations (account_id, dsn_enc, schema_name, status)
-       values ($1, $2, $3, 'ready') returning id`,
-      [accountId, encrypt(dsn), schema]
+    // Submitting twice must not fan out into two destinations writing the same
+    // rows into the same schema. Reuse the row for this account+schema and just
+    // refresh the credentials.
+    const { rows: existing } = await query(
+      `select id from syncive.destinations where account_id = $1 and schema_name = $2 order by created_at limit 1`,
+      [accountId, schema]
     )
+    const { rows: dests } = existing.length
+      ? await query(
+          `update syncive.destinations set dsn_enc = $2, status = 'ready' where id = $1 returning id`,
+          [existing[0].id, encrypt(dsn)]
+        )
+      : await query(
+          `insert into syncive.destinations (account_id, dsn_enc, schema_name, status)
+           values ($1, $2, $3, 'ready') returning id`,
+          [accountId, encrypt(dsn), schema]
+        )
     const destinationId = dests[0].id
 
     const created = []

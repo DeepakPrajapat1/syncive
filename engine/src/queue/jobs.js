@@ -39,10 +39,17 @@ export async function enqueueWebhookEvents(events) {
   )
 }
 
+// pg-boss hands a worker a single job object, but hands a *batch* worker an
+// array. Destructuring one shape when you get the other throws before the
+// handler body ever runs — silently, into pg-boss's retry machinery. Normalise
+// so the handlers work either way and survive a pg-boss upgrade.
+export const jobOf = (arg) => (Array.isArray(arg) ? arg[0] : arg)
+
 export async function startWorkers() {
   const b = await getBoss()
 
-  await b.work(QUEUES.backfill, { teamSize: 2, teamConcurrency: 1 }, async ([job]) => {
+  await b.work(QUEUES.backfill, { teamSize: 2, teamConcurrency: 1 }, async (arg) => {
+    const job = jobOf(arg)
     const { syncId } = job.data
     const result = await runBackfillChunk(syncId)
     // Not finished? Queue the next chunk. Backfills survive restarts this way.
@@ -50,8 +57,8 @@ export async function startWorkers() {
     return result
   })
 
-  await b.work(QUEUES.webhook, { teamSize: 4, teamConcurrency: 2 }, async ([job]) => {
-    return applyEvent(job.data)
+  await b.work(QUEUES.webhook, { teamSize: 4, teamConcurrency: 2 }, async (arg) => {
+    return applyEvent(jobOf(arg).data)
   })
 
   await b.work(QUEUES.reconcile, async () => reconcileAll())
