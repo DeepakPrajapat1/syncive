@@ -146,6 +146,27 @@ apiRouter.get('/syncs/:syncId/rows', wrap(async (req, res) => {
 }))
 
 // Retry everything we couldn't deliver. One button, no support ticket.
+// Re-run a backfill for one sync. Needed whenever a queued job died for reasons
+// outside the sync itself — a bad deploy, a queue outage — and there was no way
+// back other than editing the database by hand.
+apiRouter.post('/syncs/:syncId/backfill', wrap(async (req, res) => {
+  const { syncId } = req.params
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(syncId)) {
+    return res.status(400).json({ error: 'sync id must be a UUID' })
+  }
+  const { rows } = await query(
+    `select id, object_type, enabled from syncive.syncs where id = $1`,
+    [syncId]
+  )
+  if (!rows.length) return res.status(404).json({ error: 'no such sync' })
+  if (!rows[0].enabled) return res.status(409).json({ error: 'sync is disabled' })
+
+  // Start from the top: clear the checkpoint so this is a full re-read.
+  await query(`update syncive.syncs set state = 'backfilling', backfill_cursor = null where id = $1`, [syncId])
+  await enqueueBackfill(syncId)
+  res.json({ queued: true, sync: rows[0].object_type })
+}))
+
 apiRouter.post('/syncs/:syncId/retry-failures', wrap(async (req, res) => {
   const { rows } = await query(
     `select id, hubspot_id, payload from syncive.dead_letters
