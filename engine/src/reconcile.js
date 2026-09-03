@@ -1,4 +1,4 @@
-import { listPage, listProperties } from './hubspot/client.js'
+import { listProperties, searchModifiedSince } from './hubspot/client.js'
 import { upsertRecords } from './db/dest.js'
 import { logEvent, query } from './db/meta.js'
 
@@ -23,10 +23,19 @@ export async function reconcileSync(syncId, { lookbackMinutes = 90 } = {}) {
   let repaired = 0
   let scanned = 0
 
-  // Search is ordered by lastmodifieddate desc, so we can stop as soon as we
-  // fall out of the window instead of walking the whole portal.
+  // This used to walk the plain list endpoint and stop at the first page that
+  // wasn't fully inside the window. That endpoint returns records in ascending
+  // object-id order, so page one is the OLDEST records in the portal and almost
+  // never contains a recent change: the loop broke immediately, repaired
+  // nothing, and logged "ok". The safety net was doing nothing at all, which is
+  // worse than not having one, because the dashboard said everything was fine.
+  //
+  // Search really is sorted by modified date, so the same early exit is now
+  // sound: once a record older than the window shows up, everything after it is
+  // older still.
   do {
-    const data = await listPage(sync.connection_id, sync.object_type, {
+    const data = await searchModifiedSince(sync.connection_id, sync.object_type, {
+      since,
       after,
       limit: 100,
       properties: propNames,
@@ -34,16 +43,8 @@ export async function reconcileSync(syncId, { lookbackMinutes = 90 } = {}) {
     const records = data.results || []
     if (!records.length) break
 
-    const stale = records.filter((r) => {
-      const modified = new Date(r.updatedAt || r.properties?.lastmodifieddate || 0).getTime()
-      return modified >= since
-    })
     scanned += records.length
-
-    if (stale.length) {
-      repaired += await upsertRecords(sync.destination_id, sync.object_type, properties, stale)
-    }
-    if (stale.length < records.length) break // past the window
+    repaired += await upsertRecords(sync.destination_id, sync.object_type, properties, records)
 
     after = data.paging?.next?.after
   } while (after && scanned < 2000)

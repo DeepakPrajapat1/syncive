@@ -1,8 +1,9 @@
 import express from 'express'
 import { encrypt } from '../config.js'
-import { query } from '../db/meta.js'
+import { logEvent, query } from '../db/meta.js'
 import { closeDestPool, countRows, testConnection } from '../db/dest.js'
 import { enqueueBackfill } from '../queue/jobs.js'
+import { reconcileSync } from '../reconcile.js'
 import { OBJECT_TYPES } from '../hubspot/client.js'
 import { requireAccountApi, requireOwnAccount, requireOwnSync } from '../auth.js'
 
@@ -245,6 +246,21 @@ apiRouter.post('/syncs/:syncId/backfill', requireOwnSync(), wrap(async (req, res
   await query(`update syncive.syncs set state = 'backfilling', backfill_cursor = null where id = $1`, [syncId])
   const jobId = await enqueueBackfill(syncId, { force: true })
   res.json({ queued: Boolean(jobId), jobId, sync: rows[0].object_type })
+}))
+
+// Re-pull everything HubSpot says changed recently and re-apply it. This runs
+// hourly on its own; the button exists because "is my data actually current?"
+// is the question a customer asks the moment they doubt the sync, and telling
+// them to wait up to an hour for the answer is not an answer.
+apiRouter.post('/syncs/:syncId/reconcile', requireOwnSync(), wrap(async (req, res) => {
+  const lookback = Math.min(Math.max(Number(req.body?.lookback_minutes) || 90, 5), 24 * 60)
+  try {
+    const result = await reconcileSync(req.params.syncId, { lookbackMinutes: lookback })
+    res.json({ ...result, lookbackMinutes: lookback })
+  } catch (err) {
+    await logEvent(req.params.syncId, { kind: 'reconcile', status: 'failed', message: err.message })
+    res.status(502).json({ error: err.message })
+  }
 }))
 
 apiRouter.post('/syncs/:syncId/retry-failures', requireOwnSync(), wrap(async (req, res) => {

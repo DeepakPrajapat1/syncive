@@ -139,6 +139,31 @@ export async function listPage(connectionId, objectType, { after, limit = 100, p
   return hubspotRequest(connectionId, `/crm/v3/objects/${objectType}?${params}`)
 }
 
+// HubSpot spells "when was this last touched" differently per object.
+const MODIFIED_PROPERTY = {
+  contacts: 'lastmodifieddate',
+  companies: 'hs_lastmodifieddate',
+  deals: 'hs_lastmodifieddate',
+}
+
+// The plain list endpoint returns records in ascending object-id order, which is
+// useless for "what changed recently" — the first page is the oldest records in
+// the portal. Search is the only endpoint that can filter and sort by modified
+// date, so reconciliation has to go through it.
+export async function searchModifiedSince(connectionId, objectType, { since, after, limit = 100, properties }) {
+  const propertyName = MODIFIED_PROPERTY[objectType] || 'hs_lastmodifieddate'
+  return hubspotRequest(connectionId, `/crm/v3/objects/${objectType}/search`, {
+    method: 'POST',
+    body: {
+      filterGroups: [{ filters: [{ propertyName, operator: 'GTE', value: String(since) }] }],
+      sorts: [{ propertyName, direction: 'DESCENDING' }],
+      properties,
+      limit,
+      ...(after ? { after } : {}),
+    },
+  })
+}
+
 export async function getRecord(connectionId, objectType, id, properties) {
   const params = new URLSearchParams()
   if (properties?.length) params.set('properties', properties.join(','))
