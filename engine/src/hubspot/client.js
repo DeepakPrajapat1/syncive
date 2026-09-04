@@ -137,6 +137,8 @@ export async function hubspotRequest(connectionId, path, { method = 'GET', body,
     throw new RevokedError('HubSpot access was revoked')
   }
   if (!res.ok) throw new Error(`HubSpot ${res.status} on ${path}: ${await res.text()}`)
+  // A DELETE answers 204 with no body, and res.json() on an empty body throws.
+  if (res.status === 204) return null
   return res.json()
 }
 
@@ -152,6 +154,14 @@ export const OBJECT_TYPES = ['contacts', 'companies', 'deals']
 // schema drift getting picked up while collapsing a burst into one fetch.
 const PROPERTIES_TTL_MS = 5 * 60_000
 const propertiesCache = new Map()
+
+// Remove the app from the customer's portal. Without this, "Disconnect" only
+// stopped our side: the app stayed installed in HubSpot with its scopes still
+// granted, which is not what the button says and not what the customer meant.
+// HubSpot emails the portal's admins when this succeeds.
+export async function uninstallApp(connectionId) {
+  await hubspotRequest(connectionId, '/appinstalls/2026-03/external-install', { method: 'DELETE' })
+}
 
 export async function listProperties(connectionId, objectType, { fresh = false } = {}) {
   const key = `${connectionId}:${objectType}`

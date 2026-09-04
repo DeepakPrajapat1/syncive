@@ -4,7 +4,7 @@ import { logEvent, query } from '../db/meta.js'
 import { closeDestPool, countRows, testConnection } from '../db/dest.js'
 import { enqueueBackfill } from '../queue/jobs.js'
 import { reconcileSync } from '../reconcile.js'
-import { OBJECT_TYPES, revokeConnection } from '../hubspot/client.js'
+import { OBJECT_TYPES, revokeConnection, uninstallApp } from '../hubspot/client.js'
 import { requireAccountApi, requireOwnAccount, requireOwnSync } from '../auth.js'
 
 export const apiRouter = express.Router()
@@ -180,7 +180,28 @@ apiRouter.post('/connections/:connectionId/disconnect', wrap(async (req, res) =>
   )
   if (!rows.length) return res.status(404).json({ error: 'not found' })
 
-  const disabled = await revokeConnection(rows[0].id, 'Disconnected by the customer from the Syncive dashboard')
+  // Remove the app from their portal too, while the token still works. Stopping
+  // on our side but leaving the app installed with its scopes granted is not
+  // what "Disconnect" means to the person clicking it.
+  let uninstalled = false
+  let uninstallError = null
+  try {
+    await uninstallApp(rows[0].id)
+    uninstalled = true
+  } catch (err) {
+    // Never strand the customer here. If HubSpot refuses, we still stop syncing
+    // and still throw the credentials away — they can finish the removal from
+    // HubSpot's own integrations page.
+    uninstallError = err.message
+    console.error(`[disconnect] uninstall failed for ${rows[0].id}:`, err.message)
+  }
+
+  const disabled = await revokeConnection(
+    rows[0].id,
+    uninstalled
+      ? 'Disconnected from the Syncive dashboard, and the app was removed from HubSpot'
+      : 'Disconnected from the Syncive dashboard'
+  )
   // Tokens are the one thing there is no reason to keep after this.
   await query(
     `update syncive.hubspot_connections
@@ -188,7 +209,12 @@ apiRouter.post('/connections/:connectionId/disconnect', wrap(async (req, res) =>
       where id = $1`,
     [rows[0].id]
   )
-  res.json({ disconnected: rows[0].portal_id, syncsStopped: disabled })
+  res.json({
+    disconnected: rows[0].portal_id,
+    syncsStopped: disabled,
+    uninstalledFromHubSpot: uninstalled,
+    ...(uninstallError ? { uninstallError } : {}),
+  })
 }))
 
 // --- the health dashboard's data source --------------------------------------

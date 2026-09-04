@@ -344,9 +344,10 @@ const renderDashboard = (accountId) => `${HEAD}
       '<div class="card"><div class="row"><span class="name">Disconnect HubSpot</span>' +
       '<span><button class="ghost disconnect">Disconnect</button> ' +
       '<span class="result"></span></span></div>' +
-      '<p class="sub">Stops all syncing and deletes the HubSpot credentials Syncive holds. ' +
+      '<p class="sub">Stops all syncing, removes Syncive from your HubSpot account and ' +
+      'deletes the credentials it holds. HubSpot emails your admins to confirm. ' +
       'Your database is left exactly as it is — every row already written stays. ' +
-      'Reinstalling in HubSpot starts it again.</p></div>';
+      'Installing again starts it back up.</p></div>';
 
     var btn = dangerBox.querySelector('.disconnect');
     var out = dangerBox.querySelector('.result');
@@ -355,7 +356,7 @@ const renderDashboard = (accountId) => `${HEAD}
         btn.dataset.armed = '1';
         btn.textContent = 'Click again to disconnect';
         out.className = 'result';
-        out.textContent = 'All syncing stops. Your data stays.';
+        out.textContent = 'Syncive is removed from HubSpot. Your data stays.';
         setTimeout(function(){
           if(btn.dataset.armed !== '1') return;
           btn.dataset.armed = ''; btn.textContent = 'Disconnect'; out.textContent = '';

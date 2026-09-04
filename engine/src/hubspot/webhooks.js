@@ -35,9 +35,10 @@ const OBJECT_FROM_SUBSCRIPTION = {
   'deal.deletion': 'deals',
 }
 
-// HubSpot tells us when a customer removes the app. Acting on it is the
-// difference between "the sync stopped because you uninstalled it" and a
-// dashboard full of red for someone who has already left.
+// HubSpot does NOT publish an uninstall webhook — it silently drops the account's
+// subscriptions and revokes the tokens. The real detection is a 401 or a refused
+// refresh, handled in client.js. This stays as a belt-and-braces path in case a
+// portal ever does send one; do not rely on it.
 export const UNINSTALL_TYPES = new Set(['app.uninstalled', 'app.deauthorized'])
 
 export function parseUninstalls(payload) {
