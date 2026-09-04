@@ -138,7 +138,8 @@ apiRouter.post('/syncs', wrap(async (req, res) => {
 // existed in the schema and nothing could ever set it to false.
 apiRouter.post('/syncs/:syncId/pause', requireOwnSync(), wrap(async (req, res) => {
   const { rows } = await query(
-    `update syncive.syncs set enabled = false where id = $1 returning id, object_type, enabled`,
+    `update syncive.syncs set enabled = false, paused_by_user = true
+      where id = $1 returning id, object_type, enabled`,
     [req.params.syncId]
   )
   res.json({ sync: rows[0] })
@@ -158,7 +159,8 @@ apiRouter.post('/syncs/:syncId/resume', requireOwnSync(), wrap(async (req, res) 
   }
 
   const { rows: updated } = await query(
-    `update syncive.syncs set enabled = true where id = $1 returning id, object_type, enabled, state`,
+    `update syncive.syncs set enabled = true, paused_by_user = false
+      where id = $1 returning id, object_type, enabled, state`,
     [req.params.syncId]
   )
   // A sync paused mid-backfill has to be told to carry on; nothing else will.

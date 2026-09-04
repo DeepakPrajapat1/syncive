@@ -75,7 +75,13 @@ export async function saveConnection(accountId, tokens) {
          set access_token_enc  = excluded.access_token_enc,
              refresh_token_enc = excluded.refresh_token_enc,
              expires_at        = excluded.expires_at,
-             scopes            = excluded.scopes
+             scopes            = excluded.scopes,
+             -- Installing again is how you come back. Both the sign-in page and
+             -- the disconnected banner say so, so the install has to actually
+             -- undo the revocation rather than leaving a dead connection with
+             -- fresh tokens on it.
+             revoked_at        = null,
+             revoked_reason    = null
        returning id, portal_id`,
       [
         accountId,
@@ -85,6 +91,14 @@ export async function saveConnection(accountId, tokens) {
         new Date(Date.now() + tokens.expires_in * 1000),
         info.scopes || [],
       ]
+    )
+    // The syncs were disabled when access went away; bring back the ones that
+    // stopped for that reason. A sync the customer paused on purpose stays
+    // paused — reconnecting is not a reason to override their choice.
+    await client.query(
+      `update syncive.syncs set enabled = true
+        where connection_id = $1 and not enabled and not paused_by_user`,
+      [rows[0].id]
     )
     return rows[0]
   })

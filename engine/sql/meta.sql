@@ -31,6 +31,12 @@ alter table syncive.hubspot_connections
   add column if not exists revoked_at timestamptz,
   add column if not exists revoked_reason text;
 
+-- Two different reasons a sync can be switched off, and they must not be
+-- confused: the customer paused it, or access went away. Reconnecting should
+-- undo the second and leave the first alone.
+alter table syncive.syncs
+  add column if not exists paused_by_user boolean not null default false;
+
 -- Where the data goes. The connection string is encrypted; we never log it.
 create table if not exists syncive.destinations (
   id            uuid primary key default gen_random_uuid(),
