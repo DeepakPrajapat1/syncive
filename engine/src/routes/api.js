@@ -4,7 +4,7 @@ import { logEvent, query } from '../db/meta.js'
 import { closeDestPool, countRows, testConnection } from '../db/dest.js'
 import { enqueueBackfill } from '../queue/jobs.js'
 import { reconcileSync } from '../reconcile.js'
-import { OBJECT_TYPES } from '../hubspot/client.js'
+import { OBJECT_TYPES, revokeConnection } from '../hubspot/client.js'
 import { requireAccountApi, requireOwnAccount, requireOwnSync } from '../auth.js'
 
 export const apiRouter = express.Router()
@@ -133,6 +133,62 @@ apiRouter.post('/syncs', wrap(async (req, res) => {
   res.json({ syncs: created, message: 'Backfill queued' })
 }))
 
+// Pausing is not deleting. A customer mid-migration, or one who wants to stop
+// writes while they rebuild a table, had no way to say so: the enabled flag
+// existed in the schema and nothing could ever set it to false.
+apiRouter.post('/syncs/:syncId/pause', requireOwnSync(), wrap(async (req, res) => {
+  const { rows } = await query(
+    `update syncive.syncs set enabled = false where id = $1 returning id, object_type, enabled`,
+    [req.params.syncId]
+  )
+  res.json({ sync: rows[0] })
+}))
+
+apiRouter.post('/syncs/:syncId/resume', requireOwnSync(), wrap(async (req, res) => {
+  const { rows } = await query(
+    `select s.id, c.revoked_at from syncive.syncs s
+       join syncive.hubspot_connections c on c.id = s.connection_id
+      where s.id = $1`,
+    [req.params.syncId]
+  )
+  if (rows[0]?.revoked_at) {
+    return res.status(409).json({
+      error: 'HubSpot access was revoked for this portal. Reinstall the app to resume syncing.',
+    })
+  }
+
+  const { rows: updated } = await query(
+    `update syncive.syncs set enabled = true where id = $1 returning id, object_type, enabled, state`,
+    [req.params.syncId]
+  )
+  // A sync paused mid-backfill has to be told to carry on; nothing else will.
+  if (updated[0].state === 'backfilling') await enqueueBackfill(updated[0].id, { force: true })
+  res.json({ sync: updated[0] })
+}))
+
+// Stop syncing this portal entirely and forget its credentials. The customer's
+// database is untouched — every row Syncive has written stays exactly where it
+// is. This is the counterpart to uninstalling in HubSpot, for the customer who
+// starts from our side.
+apiRouter.post('/connections/:connectionId/disconnect', wrap(async (req, res) => {
+  const { rows } = await query(
+    `select id, portal_id from syncive.hubspot_connections
+      where id = $1 and account_id = $2`,
+    [req.params.connectionId, req.accountId]
+  )
+  if (!rows.length) return res.status(404).json({ error: 'not found' })
+
+  const disabled = await revokeConnection(rows[0].id, 'Disconnected by the customer from the Syncive dashboard')
+  // Tokens are the one thing there is no reason to keep after this.
+  await query(
+    `update syncive.hubspot_connections
+        set access_token_enc = '', refresh_token_enc = ''
+      where id = $1`,
+    [rows[0].id]
+  )
+  res.json({ disconnected: rows[0].portal_id, syncsStopped: disabled })
+}))
+
 // --- the health dashboard's data source --------------------------------------
 
 // Which HubSpot portals this account has connected. Needed to create a sync,
@@ -156,8 +212,9 @@ apiRouter.get('/accounts/:accountId/health', requireOwnAccount, wrap(async (req,
   const { accountId } = req.params
 
   const { rows: syncs } = await query(
-    `select s.id, s.object_type, s.state, s.backfilled_at, s.last_event_at, s.last_success_at,
-            c.portal_id, d.schema_name
+    `select s.id, s.object_type, s.state, s.enabled, s.backfilled_at, s.last_event_at,
+            s.last_success_at, c.id as connection_id, c.portal_id,
+            c.revoked_at, c.revoked_reason, d.schema_name
        from syncive.syncs s
        join syncive.hubspot_connections c on c.id = s.connection_id
        join syncive.destinations d on d.id = s.destination_id
@@ -193,9 +250,22 @@ apiRouter.get('/accounts/:accountId/health', requireOwnAccount, wrap(async (req,
       const failed = Number(stats.failed_24h)
       const stuck = sync.last_success_at && Date.now() - new Date(sync.last_success_at).getTime() > 3 * 3600_000
 
+      // A sync nobody expects to be running is not unhealthy. Reporting a paused
+      // or disconnected sync as 'stale' is how a dashboard trains people to
+      // ignore it.
+      const health = sync.revoked_at
+        ? 'disconnected'
+        : !sync.enabled
+          ? 'paused'
+          : failed > 0 || open[0].n > 0
+            ? 'degraded'
+            : stuck
+              ? 'stale'
+              : 'healthy'
+
       return {
         ...sync,
-        health: failed > 0 || open[0].n > 0 ? 'degraded' : stuck ? 'stale' : 'healthy',
+        health,
         events_ok_24h: Number(stats.ok_24h),
         events_failed_24h: failed,
         records_synced_24h: Number(stats.records_24h),
@@ -207,7 +277,11 @@ apiRouter.get('/accounts/:accountId/health', requireOwnAccount, wrap(async (req,
 
   res.json({
     account_id: accountId,
-    overall: detailed.some((s) => s.health !== 'healthy') ? 'attention' : 'healthy',
+    overall: detailed.some((s) => s.health === 'degraded' || s.health === 'stale')
+      ? 'attention'
+      : detailed.some((s) => s.health === 'disconnected')
+        ? 'disconnected'
+        : 'healthy',
     syncs: detailed,
   })
 }))

@@ -71,6 +71,14 @@ export async function startWorkers() {
       if (!result.done) await enqueueBackfill(syncId)
       return result
     } catch (err) {
+      // A revoked connection is the customer's decision, not a failure to retry.
+      // Retrying it burns the queue and fills the dashboard with red for someone
+      // who has already left.
+      if (err.revoked) {
+        console.warn(`[backfill] ${syncId} stopped: ${err.message}`)
+        await logEvent(syncId, { kind: 'error', status: 'failed', message: err.message })
+        return { stopped: 'revoked' }
+      }
       // pg-boss records the failure but shows it nowhere we look, so a job that
       // dies here just repeats forever, silently. Say what happened.
       console.error(`[backfill] ${syncId} FAILED:`, err.message)
@@ -91,6 +99,10 @@ export async function startWorkers() {
     try {
       return await applyEvent(job.data, { isFinalAttempt })
     } catch (err) {
+      if (err.revoked) {
+        console.warn('[webhook] stopped:', err.message)
+        return { stopped: 'revoked' }
+      }
       console.error(`[webhook] FAILED (attempt ${(job.retryCount ?? 0) + 1}):`, err.message)
       throw err
     }

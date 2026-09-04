@@ -1,5 +1,5 @@
 import express from 'express'
-import { dedupe, parseEvents, verifySignature } from '../hubspot/webhooks.js'
+import { dedupe, parseEvents, parseUninstalls, revokePortal, verifySignature } from '../hubspot/webhooks.js'
 import { enqueueWebhookEvents } from '../queue/jobs.js'
 import { config } from '../config.js'
 
@@ -22,7 +22,15 @@ webhookRouter.post('/hubspot', express.raw({ type: '*/*', limit: '2mb' }), async
   res.status(200).json({ received: true })
 
   try {
-    const events = dedupe(parseEvents(JSON.parse(body)))
+    const payload = JSON.parse(body)
+
+    // Handle the leaving customer before the record changes: whatever else is in
+    // this batch, their access is already gone.
+    for (const portalId of parseUninstalls(payload)) {
+      await revokePortal(portalId, 'The app was uninstalled in HubSpot')
+    }
+
+    const events = dedupe(parseEvents(payload))
     if (events.length) await enqueueWebhookEvents(events)
   } catch (err) {
     console.error('[webhook] enqueue failed', err.message)

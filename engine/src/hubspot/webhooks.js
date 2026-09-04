@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import { config } from '../config.js'
-import { getRecord, listProperties } from './client.js'
+import { getRecord, listProperties, revokeConnection } from './client.js'
 import { markDeleted, upsertRecords } from '../db/dest.js'
 import { deadLetter, logEvent, query } from '../db/meta.js'
 
@@ -33,6 +33,32 @@ const OBJECT_FROM_SUBSCRIPTION = {
   'deal.propertyChange': 'deals',
   'deal.creation': 'deals',
   'deal.deletion': 'deals',
+}
+
+// HubSpot tells us when a customer removes the app. Acting on it is the
+// difference between "the sync stopped because you uninstalled it" and a
+// dashboard full of red for someone who has already left.
+export const UNINSTALL_TYPES = new Set(['app.uninstalled', 'app.deauthorized'])
+
+export function parseUninstalls(payload) {
+  const events = Array.isArray(payload) ? payload : [payload]
+  return [
+    ...new Set(
+      events
+        .filter((e) => UNINSTALL_TYPES.has(e.subscriptionType))
+        .map((e) => String(e.portalId))
+        .filter(Boolean)
+    ),
+  ]
+}
+
+export async function revokePortal(portalId, reason) {
+  const { rows } = await query(
+    `select id from syncive.hubspot_connections where portal_id = $1 and revoked_at is null`,
+    [String(portalId)]
+  )
+  for (const row of rows) await revokeConnection(row.id, reason)
+  return rows.length
 }
 
 export function parseEvents(payload) {

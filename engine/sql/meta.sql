@@ -24,6 +24,13 @@ create table if not exists syncive.hubspot_connections (
   unique (account_id, portal_id)
 );
 
+-- Set when the customer uninstalls in HubSpot or revokes our access. A revoked
+-- connection is kept, not deleted: the dashboard has to be able to explain why
+-- the sync stopped, and "the row vanished" explains nothing.
+alter table syncive.hubspot_connections
+  add column if not exists revoked_at timestamptz,
+  add column if not exists revoked_reason text;
+
 -- Where the data goes. The connection string is encrypted; we never log it.
 create table if not exists syncive.destinations (
   id            uuid primary key default gen_random_uuid(),

@@ -105,6 +105,7 @@ const renderDashboard = (accountId) => `${HEAD}
     <span class="sub">Fetching current sync state.</span></div>
   <div id="syncs"></div>
   <div id="destinations"></div>
+  <div id="danger"></div>
   ${NOTE}
 </div>
 <script>
@@ -130,7 +131,12 @@ const renderDashboard = (accountId) => `${HEAD}
     if(s < 86400) return Math.floor(s/3600) + 'h ago';
     return Math.floor(s/86400) + 'd ago';
   }
-  function tone(h){ return h === 'healthy' ? 'ok' : h === 'stale' ? 'warn' : 'bad'; }
+  function tone(h){
+    if(h === 'healthy') return 'ok';
+    if(h === 'stale') return 'warn';
+    if(h === 'paused' || h === 'disconnected') return '';
+    return 'bad';
+  }
   function num(n){ return Number(n || 0).toLocaleString(); }
 
   function setBanner(cls, title, detail){
@@ -145,7 +151,12 @@ const renderDashboard = (accountId) => `${HEAD}
     var html = '';
     html += '<div class="card" data-sync="' + esc(s.id) + '">';
     html += '<div class="row"><span class="name">' + esc(s.object_type) + '</span>';
-    html += '<span><span class="pill">' + esc(s.state) + '</span> ';
+    html += '<span>';
+    // 'live' next to 'disconnected' is a contradiction. The backfill state only
+    // means anything while the sync is actually running.
+    if(s.health !== 'disconnected' && s.health !== 'paused'){
+      html += '<span class="pill">' + esc(s.state) + '</span> ';
+    }
     html += '<span class="pill ' + t + '">' + esc(s.health) + '</span></span></div>';
     html += '<div class="stats">';
     html += '<div class="stat"><div class="k">Last success</div><div class="v ' +
@@ -182,9 +193,16 @@ const renderDashboard = (accountId) => `${HEAD}
     }
 
     html += '<div class="actions">';
-    html += '<button class="retry"' + (dead ? '' : ' disabled') + '>Retry ' +
-            esc(num(dead)) + ' failed record' + (dead === 1 ? '' : 's') + '</button>';
-    html += '<button class="ghost count">Count rows in destination</button>';
+    if(s.revoked_at){
+      html += '<button class="ghost" disabled>Reinstall in HubSpot to resume</button>';
+    } else if(s.enabled === false){
+      html += '<button class="ghost resume">Resume sync</button>';
+    } else {
+      html += '<button class="retry"' + (dead ? '' : ' disabled') + '>Retry ' +
+              esc(num(dead)) + ' failed record' + (dead === 1 ? '' : 's') + '</button>';
+      html += '<button class="ghost count">Count rows in destination</button>';
+      html += '<button class="ghost pause">Pause sync</button>';
+    }
     html += '<span class="result"></span></div>';
     html += '</div>';
     return html;
@@ -196,7 +214,21 @@ const renderDashboard = (accountId) => `${HEAD}
       (function(card){
         var id = card.getAttribute('data-sync');
         var out = card.querySelector('.result');
-        card.querySelector('.retry').addEventListener('click', function(){
+        var pauseBtn = card.querySelector('.pause');
+        if(pauseBtn) pauseBtn.addEventListener('click', function(){
+          var btn = this; btn.disabled = true;
+          out.className = 'result'; out.textContent = 'Pausing\u2026';
+          post(id, 'pause', out, btn, 'Pause sync');
+        });
+        var resumeBtn = card.querySelector('.resume');
+        if(resumeBtn) resumeBtn.addEventListener('click', function(){
+          var btn = this; btn.disabled = true;
+          out.className = 'result'; out.textContent = 'Resuming\u2026';
+          post(id, 'resume', out, btn, 'Resume sync');
+        });
+
+        var retryBtn = card.querySelector('.retry');
+        if(retryBtn) retryBtn.addEventListener('click', function(){
           var btn = this; btn.disabled = true;
           out.className = 'result'; out.textContent = 'Requeueing…';
           fetch('/api/syncs/' + encodeURIComponent(id) + '/retry-failures', {method:'POST'})
@@ -212,7 +244,8 @@ const renderDashboard = (accountId) => `${HEAD}
               btn.disabled = false;
             });
         });
-        card.querySelector('.count').addEventListener('click', function(){
+        var countBtn = card.querySelector('.count');
+        if(countBtn) countBtn.addEventListener('click', function(){
           var btn = this; btn.disabled = true;
           out.className = 'result'; out.textContent = 'Counting…';
           fetch('/api/syncs/' + encodeURIComponent(id) + '/rows')
@@ -232,13 +265,16 @@ const renderDashboard = (accountId) => `${HEAD}
   }
 
   var destBox = document.getElementById('destinations');
+  var dangerBox = document.getElementById('danger');
+  var CONNECTION = null;
+  var REVOKED = false;
 
   // A mis-click during setup can leave a second destination writing the same
   // rows into the same schema — three times the HubSpot calls and three times
   // the database connections, for one copy of the data. Until you can see the
   // destinations you cannot tell that is what is happening.
   function renderDestinations(list){
-    if(list.length < 2){ destBox.innerHTML = ''; return; }
+    if(list.length < 2){ destBox.innerHTML = ''; renderDanger(); return; }
 
     var html = '<div class="card"><div class="row"><span class="name">Destinations</span>' +
       '<span class="pill bad">' + list.length + ' configured</span></div>' +
@@ -253,13 +289,14 @@ const renderDashboard = (accountId) => `${HEAD}
       for(var k=0;k<syncs.length;k++) if(syncs[k].last_success_at) live++;
       html += '<div class="row" data-dest="' + esc(d.id) + '">';
       html += '<span><code>' + esc(d.schema_name) + '</code> ' +
-              '<span class="sub">' + esc(d.id.slice(0,8)) + '\u2026 &middot; ' +
+              '<span class="sub">' + esc(d.id.slice(0,8)) + '… &middot; ' +
               syncs.length + ' sync' + (syncs.length === 1 ? '' : 's') + ' &middot; ' +
               (live ? live + ' with data' : 'never synced') + '</span></span>';
       html += '<span><button class="ghost remove">Remove</button> ' +
               '<span class="result"></span></span></div>';
     }
     destBox.innerHTML = html + '</div>';
+    renderDanger(true);
 
     var rows = destBox.querySelectorAll('[data-dest]');
     for(var r=0;r<rows.length;r++){
@@ -281,7 +318,7 @@ const renderDashboard = (accountId) => `${HEAD}
             }, 6000);
             return;
           }
-          btn.dataset.armed = ''; btn.disabled = true; btn.textContent = 'Removing\u2026';
+          btn.dataset.armed = ''; btn.disabled = true; btn.textContent = 'Removing…';
           fetch('/api/destinations/' + encodeURIComponent(id), {method:'DELETE'})
             .then(function(res){ return res.json().then(function(j){ return {s:res.status,j:j}; }); })
             .then(function(res){
@@ -299,6 +336,46 @@ const renderDashboard = (accountId) => `${HEAD}
     }
   }
 
+  // Leaving has to be as visible as arriving. A customer who cannot find the way
+  // out uninstalls in HubSpot instead and never tells you why.
+  function renderDanger(append){
+    if(!CONNECTION || REVOKED){ if(!append) dangerBox.innerHTML = ''; return; }
+    dangerBox.innerHTML =
+      '<div class="card"><div class="row"><span class="name">Disconnect HubSpot</span>' +
+      '<span><button class="ghost disconnect">Disconnect</button> ' +
+      '<span class="result"></span></span></div>' +
+      '<p class="sub">Stops all syncing and deletes the HubSpot credentials Syncive holds. ' +
+      'Your database is left exactly as it is — every row already written stays. ' +
+      'Reinstalling in HubSpot starts it again.</p></div>';
+
+    var btn = dangerBox.querySelector('.disconnect');
+    var out = dangerBox.querySelector('.result');
+    btn.addEventListener('click', function(){
+      if(btn.dataset.armed !== '1'){
+        btn.dataset.armed = '1';
+        btn.textContent = 'Click again to disconnect';
+        out.className = 'result';
+        out.textContent = 'All syncing stops. Your data stays.';
+        setTimeout(function(){
+          if(btn.dataset.armed !== '1') return;
+          btn.dataset.armed = ''; btn.textContent = 'Disconnect'; out.textContent = '';
+        }, 6000);
+        return;
+      }
+      btn.dataset.armed = ''; btn.disabled = true; btn.textContent = 'Disconnecting\u2026';
+      fetch('/api/connections/' + encodeURIComponent(CONNECTION) + '/disconnect', {method:'POST'})
+        .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
+        .then(function(r){
+          if(r.s >= 400) throw new Error(r.j && r.j.error || ('HTTP ' + r.s));
+          load();
+        })
+        .catch(function(err){
+          out.className = 'result bad'; out.textContent = String(err.message || err);
+          btn.disabled = false; btn.textContent = 'Disconnect';
+        });
+    });
+  }
+
   function loadDestinations(){
     fetch('/api/destinations', {headers:{accept:'application/json'}})
       .then(function(r){ return r.ok ? r.json() : null; })
@@ -306,8 +383,24 @@ const renderDashboard = (accountId) => `${HEAD}
       .catch(function(){ /* the sync cards are the page; this section is a bonus */ });
   }
 
+  // Pause and resume are the same shape: fire, report, reload.
+  function post(id, action, out, btn, label){
+    fetch('/api/syncs/' + encodeURIComponent(id) + '/' + action, {method:'POST'})
+      .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
+      .then(function(r){
+        if(r.s >= 400) throw new Error(r.j && r.j.error || ('HTTP ' + r.s));
+        load();
+      })
+      .catch(function(err){
+        out.className = 'result bad'; out.textContent = String(err.message || err);
+        btn.disabled = false; btn.textContent = label;
+      });
+  }
+
   function render(data){
     var syncs = (data && data.syncs) || [];
+    CONNECTION = syncs.length ? syncs[0].connection_id : null;
+    REVOKED = syncs.some(function(s){ return s.revoked_at; });
     updated.textContent = 'Updated ' + new Date().toLocaleTimeString() + ' — refreshes every 30s';
 
     if(!syncs.length){
@@ -320,22 +413,43 @@ const renderDashboard = (accountId) => `${HEAD}
       return;
     }
 
-    var bad = 0, staleN = 0;
+    var bad = 0, staleN = 0, pausedN = 0, gone = null;
     for(var i=0;i<syncs.length;i++){
       if(syncs[i].health === 'degraded') bad++;
       else if(syncs[i].health === 'stale') staleN++;
+      else if(syncs[i].health === 'paused') pausedN++;
+      else if(syncs[i].health === 'disconnected') gone = syncs[i];
+    }
+    // Say this before anything else: nothing below is going to update, and the
+    // reason is not a fault.
+    if(gone){
+      var why = gone.revoked_reason || 'Access to this portal was revoked';
+      if(!/[.!?]$/.test(why)) why += '.';
+      setBanner('', 'HubSpot disconnected',
+        why + ' Your tables and rows are untouched — reinstall Syncive in HubSpot to start syncing again.');
+      renderCards(syncs);
+      return;
     }
     if(bad) setBanner('bad', 'Attention needed',
       bad + ' of ' + syncs.length + ' syncs are degraded — failed events or undelivered records.');
     else if(staleN) setBanner('attention', 'Sync is stale',
       staleN + ' of ' + syncs.length + ' syncs have not succeeded in over 3 hours.');
+    else if(pausedN === syncs.length) setBanner('', 'All syncs paused',
+      'Nothing is being written. Resume any sync to start again.');
     else setBanner('ok', 'All syncs healthy',
-      syncs.length + ' sync' + (syncs.length === 1 ? '' : 's') + ' flowing, no unresolved failures.');
+      (syncs.length - pausedN) + ' sync' + (syncs.length - pausedN === 1 ? '' : 's') + ' flowing' +
+      (pausedN ? ', ' + pausedN + ' paused' : '') + ', no unresolved failures.');
 
+    renderCards(syncs);
+  }
+
+  function renderCards(syncs){
     var html = '';
     for(var j=0;j<syncs.length;j++) html += renderSync(syncs[j]);
     list.innerHTML = html;
     wire();
+    // The connection id only becomes known here, so the exit is drawn here too.
+    renderDanger();
   }
 
   function load(){

@@ -27,14 +27,43 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)))
 
 // ---- token lifecycle --------------------------------------------------------
 
+// Distinguishable so callers can stop rather than retry: nothing about a
+// revoked connection gets better by trying again.
+export class RevokedError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'RevokedError'
+    this.revoked = true
+  }
+}
+
+// Mark the connection dead and stop its syncs. Destinations and the customer's
+// own tables are left alone — reinstalling should pick up where it left off.
+export async function revokeConnection(connectionId, reason) {
+  await query(
+    `update syncive.hubspot_connections
+        set revoked_at = coalesce(revoked_at, now()), revoked_reason = $2
+      where id = $1`,
+    [connectionId, String(reason).slice(0, 500)]
+  )
+  const { rowCount } = await query(
+    `update syncive.syncs set enabled = false where connection_id = $1 and enabled`,
+    [connectionId]
+  )
+  console.warn(`[oauth] connection ${connectionId} revoked (${reason}); disabled ${rowCount} sync(s)`)
+  return rowCount
+}
+
 export async function getAccessToken(connectionId) {
   const { rows } = await query(
-    `select id, portal_id, access_token_enc, refresh_token_enc, expires_at
+    `select id, portal_id, access_token_enc, refresh_token_enc, expires_at,
+            revoked_at, revoked_reason
        from syncive.hubspot_connections where id = $1`,
     [connectionId]
   )
   const conn = rows[0]
   if (!conn) throw new Error(`No HubSpot connection ${connectionId}`)
+  if (conn.revoked_at) throw new RevokedError(conn.revoked_reason || 'HubSpot access was revoked')
 
   // Refresh a minute early — clock skew has ruined better systems than ours.
   if (new Date(conn.expires_at).getTime() - Date.now() > 60_000) {
@@ -52,7 +81,17 @@ export async function getAccessToken(connectionId) {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
   })
-  if (!res.ok) throw new Error(`Token refresh failed (${res.status}): ${await res.text()}`)
+  if (!res.ok) {
+    const detail = await res.text()
+    // A refresh token is long-lived; HubSpot rejecting it outright means the
+    // customer uninstalled the app or revoked our access. That is a decision,
+    // not an outage, so stop retrying it forever and record why.
+    if (res.status === 400 || res.status === 401 || res.status === 403) {
+      await revokeConnection(connectionId, 'HubSpot rejected the refresh token — the app was most likely uninstalled')
+      throw new RevokedError('HubSpot access was revoked')
+    }
+    throw new Error(`Token refresh failed (${res.status}): ${detail}`)
+  }
   const data = await res.json()
 
   await query(
@@ -92,6 +131,11 @@ export async function hubspotRequest(connectionId, path, { method = 'GET', body,
     return hubspotRequest(connectionId, path, { method, body, retries: retries - 1 })
   }
 
+  if (res.status === 401) {
+    // The token was valid enough to send; HubSpot refusing it means access is gone.
+    await revokeConnection(connectionId, 'HubSpot returned 401 — the app was most likely uninstalled')
+    throw new RevokedError('HubSpot access was revoked')
+  }
   if (!res.ok) throw new Error(`HubSpot ${res.status} on ${path}: ${await res.text()}`)
   return res.json()
 }
