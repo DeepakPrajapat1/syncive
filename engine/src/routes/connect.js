@@ -34,9 +34,17 @@ connectRouter.get('/', (req, res) => {
 
 // Postgres takes the password from the URI, so every character that means
 // something in a URI has to be escaped rather than trusted.
+//
+// `sslmode=require` is deliberately NOT written into the string. node-postgres
+// treats require as verify-full, so putting it here rejects every self-signed
+// or private-CA certificate — which is Supabase, RDS and most managed Postgres.
+// Leaving it out lets the driver negotiate TLS and encrypt without demanding a
+// public CA, which is what libpq's `require` actually means. Only verify-full,
+// where the customer has asked for certificate checking, goes in the URI.
 const buildDsn = ({ host, port, database, user, password, sslmode }) =>
   `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}` +
-  `@${host}:${port}/${encodeURIComponent(database)}?sslmode=${sslmode}`
+  `@${host}:${port}/${encodeURIComponent(database)}` +
+  (sslmode === 'verify-full' ? '?sslmode=verify-full' : '')
 
 const SSL_MODES = ['require', 'verify-full']
 

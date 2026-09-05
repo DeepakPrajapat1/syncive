@@ -116,11 +116,22 @@ export async function verifyDestination(dsn, schema) {
     return ok
   }
 
+  // The TLS probe is a real connection attempt, so a wrong password surfaces
+  // here rather than at the sign-in step. Reporting that as "could not reach the
+  // server" sends the customer off checking firewalls for an hour.
+  const isAuthFailure = (message) =>
+    /password|authentication|role .* does not exist|no pg_hba|database .* does not exist/i.test(message)
+
   let ssl
   try {
     ssl = await negotiateSsl(dsn)
   } catch (err) {
-    record('Reach the server', false, err.message)
+    if (isAuthFailure(err.message)) {
+      record('Reach the server', true)
+      record('Sign in', false, err.message)
+    } else {
+      record('Reach the server', false, err.message)
+    }
     return { ok: false, steps }
   }
   record('Reach the server', true)
@@ -236,7 +247,15 @@ export async function provisionTable(destinationId, objectType, properties) {
   const client = await pool.connect()
 
   try {
-    await client.query(`create schema if not exists ${ident(schema)}`)
+    // `create schema if not exists` checks the privilege before it checks
+    // existence, so a user that owns this schema but has no CREATE on the
+    // database — which is exactly the least-privilege user we tell customers to
+    // make — fails here even though there is nothing to create. Look first.
+    const { rows: present } = await client.query(
+      'select 1 from information_schema.schemata where schema_name = $1',
+      [schema]
+    )
+    if (!present.length) await client.query(`create schema ${ident(schema)}`)
     await client.query(`
       create table if not exists ${table} (
         hs_object_id  text primary key,
