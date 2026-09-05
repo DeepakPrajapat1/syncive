@@ -1,17 +1,18 @@
 import express from 'express'
 import { encrypt } from '../config.js'
 import { query } from '../db/meta.js'
-import { testConnection } from '../db/dest.js'
+import { verifyDestination } from '../db/dest.js'
 import { enqueueBackfill } from '../queue/jobs.js'
 import { OBJECT_TYPES } from '../hubspot/client.js'
 import { requireAccountPage } from '../auth.js'
 
 export const connectRouter = express.Router()
 
-// Setting up a sync used to mean three curl calls with a password on the command
-// line. This is the same three steps as a form: the connection string is posted
-// straight to the engine over HTTPS, encrypted before it touches the database,
-// and never echoed back into the page.
+// This asked for a whole connection string in one box, which is a nudge in the
+// wrong direction: the easiest thing to put in it is the superuser URI copied
+// out of a provider dashboard. Separate fields push toward a scoped user, and
+// the page shows the grant script that creates one — the same shape every
+// established product in this category uses.
 connectRouter.use(express.urlencoded({ extended: false, limit: '64kb' }))
 // Who you are comes from the session the HubSpot install minted, never from the
 // request. A form field naming someone else's account is simply not read.
@@ -31,11 +32,29 @@ connectRouter.get('/', (req, res) => {
   res.type('html').send(renderForm({}))
 })
 
+// Postgres takes the password from the URI, so every character that means
+// something in a URI has to be escaped rather than trusted.
+const buildDsn = ({ host, port, database, user, password, sslmode }) =>
+  `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}` +
+  `@${host}:${port}/${encodeURIComponent(database)}?sslmode=${sslmode}`
+
+const SSL_MODES = ['require', 'verify-full']
+
 connectRouter.post('/', async (req, res) => {
   const accountId = req.accountId
-  const dsn = String(req.body.dsn || '').trim()
+  const form = {
+    host: String(req.body.host || '').trim(),
+    port: String(req.body.port || '5432').trim(),
+    database: String(req.body.database || '').trim(),
+    user: String(req.body.user || '').trim(),
+    password: String(req.body.password || ''),
+    // Two products in this category let a customer turn TLS off. Offering the
+    // choice at all is the mistake; there is no option here that disables it.
+    sslmode: SSL_MODES.includes(req.body.sslmode) ? req.body.sslmode : 'require',
+  }
   const schema = String(req.body.schema || 'hubspot').trim().toLowerCase()
   const chosen = OBJECT_TYPES.filter((t) => req.body[`obj_${t}`])
+  const dsn = form.host && form.database && form.user ? buildDsn({ ...form, database: form.database }) : ''
 
   // Driver errors can quote the connection string back at us. Scrub it before
   // anything reaches the page or a log line.
@@ -44,20 +63,34 @@ connectRouter.post('/', async (req, res) => {
     if (dsn) out = out.split(dsn).join('[connection string]')
     return out.replace(/\/\/[^\s/@]*:[^\s/@]*@/g, '//[redacted]@')
   }
-  const fail = (message, status = 400) =>
-    res.status(status).type('html').send(renderForm({ schema, chosen, error: redact(message) }))
+  const fail = (message, status = 400, steps = null) =>
+    res
+      .status(status)
+      .type('html')
+      .send(renderForm({ schema, chosen, form, error: redact(message), steps }))
 
   try {
-    if (!dsn) return fail('Paste your Postgres connection string.')
+    if (!form.host) return fail('Enter the database host.')
+    if (!/^\d{1,5}$/.test(form.port)) return fail('Port must be a number.')
+    if (!form.database) return fail('Enter the database name.')
+    if (!form.user) return fail('Enter the database user.')
+    if (!form.password) return fail('Enter the password for that user.')
     if (!SCHEMA_OK.test(schema)) {
       return fail('Schema name must be lowercase letters, digits and underscores, starting with a letter.')
     }
     if (!chosen.length) return fail('Pick at least one object to sync.')
 
-    // Fail here rather than halfway through a backfill: a bad password or an
-    // unreachable host is the most common setup mistake by a mile.
-    const probe = await testConnection(dsn)
-    if (!probe.ok) return fail(`Could not connect to that database: ${probe.error}`)
+    // Fail here rather than halfway through a backfill, and fail specifically:
+    // the checks run in order and the page shows which one stopped.
+    const probe = await verifyDestination(dsn, schema)
+    if (!probe.ok) {
+      const failed = probe.steps.find((step) => !step.ok)
+      return fail(
+        failed ? `${failed.name} — ${failed.detail || 'failed'}` : 'Could not connect to that database',
+        400,
+        probe.steps
+      )
+    }
 
     const { rows: conns } = await query(
       `select id, portal_id from syncive.hubspot_connections where account_id = $1 order by created_at limit 1`,
@@ -146,62 +179,177 @@ const HEAD = `<!doctype html>
   ul{margin:.5rem 0 0;padding-left:1.1rem}
   footer{color:var(--muted);font-size:.78rem;margin-top:1.25rem;
          border-top:1px solid var(--border);padding-top:.9rem}
+  .row2{display:flex;gap:.75rem;flex-wrap:wrap}
+  .row2 .field{flex:1 1 12rem}
+  .row2 .field.narrow{flex:0 0 6rem}
+  select{width:100%;padding:.6rem .7rem;border-radius:.5rem;border:1px solid var(--border);
+         background:#0f141d;color:var(--text);font:inherit;font-size:.95rem}
+  pre{background:#0f141d;border:1px solid var(--border);border-radius:.5rem;
+      padding:.7rem;overflow-x:auto;font-size:.82rem;margin:.6rem 0 .5rem;
+      white-space:pre;color:#cfe0f5}
+  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--border);
+               font-weight:500;padding:.4rem .7rem;font-size:.85rem}
+  .card.inner{background:#0f141d;margin:.25rem 0 1rem}
+  .steps{list-style:none;padding:0;margin:.5rem 0 0}
+  .steps li{font-size:.88rem;padding:.15rem 0}
+  .steps li.ok{color:var(--ok)} .steps li.bad{color:var(--bad)}
+  .steps .sub{color:var(--muted)}
+  #plan{margin:.4rem 0 .6rem;padding-left:1.1rem}
+  #plan li{font-size:.88rem;padding:.1rem 0}
 </style>`
 
-function renderForm({ schema = 'hubspot', chosen = OBJECT_TYPES, error }) {
+function renderForm({ schema = 'hubspot', chosen = OBJECT_TYPES, form = {}, error, steps } = {}) {
+  const v = (k, d = '') => esc(form[k] ?? d)
   const checks = OBJECT_TYPES.map(
     (t) => `<label><input type="checkbox" name="obj_${esc(t)}" value="1"${
       chosen.includes(t) ? ' checked' : ''
     }> ${esc(t)}</label>`
   ).join('')
 
+  const results = steps
+    ? `<div class="card"><strong>Connection check</strong><ul class="steps">${steps
+        .map(
+          (step) =>
+            `<li class="${step.ok ? 'ok' : 'bad'}">${step.ok ? '&check;' : '&times;'} ${esc(step.name)}` +
+            `${step.detail ? ` <span class="sub">${esc(step.detail)}</span>` : ''}</li>`
+        )
+        .join('')}</ul></div>`
+    : ''
+
   return `${HEAD}
 <div class="wrap">
   <h1>Connect your database</h1>
-  <p class="sub">Syncive will mirror your HubSpot records into a schema in your own Postgres.</p>
+  <p class="sub">Syncive mirrors your HubSpot records into a schema in your own Postgres.</p>
   ${error ? `<div class="card err">${esc(error)}</div>` : ''}
+  ${results}
+
+  <div class="card">
+    <strong>Make a user for Syncive first</strong>
+    <p class="hint">Don't give Syncive your admin login. Run this in your database — it
+      creates a user that can reach one schema and nothing else. Change the password.</p>
+    <pre id="grant"></pre>
+    <button type="button" class="ghost" id="copy">Copy</button>
+  </div>
+
   <form method="post" class="card" autocomplete="off">
-    <div class="field">
-      <label for="dsn">Postgres connection string</label>
-      <input id="dsn" name="dsn" type="password" required spellcheck="false"
-             placeholder="postgresql://user:password@host:5432/database">
-      <p class="hint">Stored encrypted, never shown again. On Supabase use the
-         <strong>session pooler</strong> URI — the direct one is IPv6-only.</p>
+    <div class="row2">
+      <div class="field">
+        <label for="host">Host</label>
+        <input id="host" name="host" type="text" required spellcheck="false"
+               value="${v('host')}" placeholder="db.example.com">
+      </div>
+      <div class="field narrow">
+        <label for="port">Port</label>
+        <input id="port" name="port" type="text" inputmode="numeric" value="${v('port', '5432')}">
+      </div>
     </div>
     <div class="field">
-      <label for="schema">Schema to write into</label>
-      <input id="schema" name="schema" type="text" value="${esc(schema)}" spellcheck="false">
-      <p class="hint">Created if it doesn't exist. Nothing outside this schema is touched.</p>
+      <label for="database">Database</label>
+      <input id="database" name="database" type="text" required spellcheck="false" value="${v('database')}">
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label for="user">User</label>
+        <input id="user" name="user" type="text" required spellcheck="false"
+               value="${v('user', 'syncive')}">
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required spellcheck="false">
+      </div>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label for="schema">Schema to write into</label>
+        <input id="schema" name="schema" type="text" value="${esc(schema)}" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="sslmode">Encryption</label>
+        <select id="sslmode" name="sslmode">
+          <option value="require"${form.sslmode === 'verify-full' ? '' : ' selected'}>Required</option>
+          <option value="verify-full"${form.sslmode === 'verify-full' ? ' selected' : ''}>Required, verify certificate</option>
+        </select>
+        <p class="hint">There is no option to turn this off.</p>
+      </div>
     </div>
     <div class="field">
       <label>Objects to sync</label>
       <div class="objs">${checks}</div>
     </div>
-    <button type="submit" id="go">Connect and start backfill</button>
-    <p class="hint" id="status" hidden>Testing the connection and provisioning tables&hellip;
+
+    <div class="card inner">
+      <strong>What Syncive will create</strong>
+      <ul id="plan"></ul>
+      <p class="hint">Nothing outside this schema is read or written. Syncive stores your
+        HubSpot tokens and this password encrypted, and never keeps your CRM records.</p>
+    </div>
+
+    <button type="submit" id="go">Test connection and start backfill</button>
+    <p class="hint" id="status" hidden>Running the checks and provisioning tables&hellip;
        this can take up to a minute the first time.</p>
   </form>
+
   <script>
-    // A slow first request (cold start plus a connection probe) looks like a dead
-    // button, so people click it again — and used to get a second destination.
-    // The server tolerates that now; this stops it happening in the first place.
     (function () {
       var form = document.currentScript.previousElementSibling;
       var go = form.querySelector('#go');
       var status = form.querySelector('#status');
+      var schema = form.querySelector('#schema');
+      var user = form.querySelector('#user');
+      var db = form.querySelector('#database');
+      var grant = document.getElementById('grant');
+      var plan = document.getElementById('plan');
+      var objs = form.querySelectorAll('.objs input');
+
+      function ident(v, fallback) {
+        v = (v || '').trim().toLowerCase();
+        return /^[a-z_][a-z0-9_]*$/.test(v) ? v : fallback;
+      }
+
+      // Show the exact statements, filled in with what they typed. A snippet the
+      // customer has to edit is a snippet they will get wrong.
+      function paint() {
+        var s = ident(schema.value, 'hubspot');
+        var u = ident(user.value, 'syncive');
+        var d = ident(db.value, 'your_database');
+        grant.textContent =
+          "create user " + u + " with password 'choose-a-strong-one';\\n" +
+          "create schema " + s + " authorization " + u + ";\\n" +
+          "grant connect on database " + d + " to " + u + ";";
+
+        var picked = [];
+        for (var i = 0; i < objs.length; i++) if (objs[i].checked) picked.push(objs[i].parentNode.textContent.trim());
+        plan.innerHTML = picked.length
+          ? picked.map(function (t) { return '<li><code>' + s + '.' + t + '</code></li>'; }).join('')
+          : '<li class="sub">Pick at least one object above.</li>';
+      }
+
+      [schema, user, db].forEach(function (el) { el.addEventListener('input', paint); });
+      for (var i = 0; i < objs.length; i++) objs[i].addEventListener('change', paint);
+      paint();
+
+      document.getElementById('copy').addEventListener('click', function () {
+        var btn = this;
+        navigator.clipboard.writeText(grant.textContent).then(function () {
+          btn.textContent = 'Copied';
+          setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+        }).catch(function () { btn.textContent = 'Select it and copy'; });
+      });
+
+      // A slow first request (cold start plus the connection checks) looks like a
+      // dead button, so people click it again — and used to get a second destination.
       form.addEventListener('submit', function (e) {
         if (form.dataset.sent) { e.preventDefault(); return; }
         form.dataset.sent = '1';
-        go.textContent = 'Connecting\u2026';
+        go.textContent = 'Checking\u2026';
         status.hidden = false;
-        // Disable after the form has been serialised, never before.
         setTimeout(function () { go.disabled = true; }, 0);
       });
     })();
   </script>
   <footer>
-    Syncive needs write access to create the schema and its tables; it never reads
-    anything else in your database.
+    Syncive needs to create its schema and tables. Give it the scoped user above rather
+    than an admin login, and it cannot reach anything else in your database.
   </footer>
 </div>`
 }

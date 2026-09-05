@@ -105,6 +105,85 @@ export async function testConnection(dsn) {
   }
 }
 
+// A single "could not connect" tells the customer nothing about which of half a
+// dozen things is wrong. Every product in this category runs staged checks and
+// names the one that failed; a missing GRANT and a wrong password should not
+// produce the same sentence.
+export async function verifyDestination(dsn, schema) {
+  const steps = []
+  const record = (name, ok, detail) => {
+    steps.push({ name, ok, ...(detail ? { detail } : {}) })
+    return ok
+  }
+
+  let ssl
+  try {
+    ssl = await negotiateSsl(dsn)
+  } catch (err) {
+    record('Reach the server', false, err.message)
+    return { ok: false, steps }
+  }
+  record('Reach the server', true)
+  record('Encrypt the connection', ssl !== false, ssl === false ? 'Server does not offer TLS' : undefined)
+
+  const client = new pg.Client({
+    connectionString: dsn,
+    connectionTimeoutMillis: 8_000,
+    ...(ssl === undefined ? {} : { ssl }),
+  })
+
+  try {
+    await client.connect()
+  } catch (err) {
+    record('Sign in', false, err.message)
+    return { ok: false, steps }
+  }
+
+  try {
+    const { rows } = await client.query('select current_database() as db, current_user as usr, version() as version')
+    record('Sign in', true, `as ${rows[0].usr}`)
+
+    const exists = await client.query('select 1 from information_schema.schemata where schema_name = $1', [schema])
+    if (exists.rowCount) {
+      record(`Use the "${schema}" schema`, true, 'already exists')
+    } else {
+      try {
+        await client.query(`create schema ${ident(schema)}`)
+        record(`Create the "${schema}" schema`, true)
+      } catch (err) {
+        record(`Create the "${schema}" schema`, false, err.message)
+        return { ok: false, steps }
+      }
+    }
+
+    // Creating a schema and creating a table inside one are separate rights, and
+    // failing on the second halfway through a backfill is the worst time to find out.
+    const probe = `${ident(schema)}.${ident('_syncive_probe')}`
+    try {
+      await client.query(`create table if not exists ${probe} (ok boolean)`)
+      await client.query(`insert into ${probe} (ok) values (true)`)
+      await client.query(`drop table ${probe}`)
+      record('Create and write to a table', true)
+    } catch (err) {
+      record('Create and write to a table', false, err.message)
+      return { ok: false, steps }
+    }
+
+    return {
+      ok: true,
+      steps,
+      database: rows[0].db,
+      version: rows[0].version.split(' ').slice(0, 2).join(' '),
+      tls: ssl !== false,
+    }
+  } catch (err) {
+    record('Sign in', false, err.message)
+    return { ok: false, steps }
+  } finally {
+    await client.end().catch(() => {})
+  }
+}
+
 // ---- schema provisioning ----------------------------------------------------
 
 // HubSpot property types -> Postgres column types. Anything unknown becomes text:
