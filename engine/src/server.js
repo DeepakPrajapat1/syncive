@@ -5,6 +5,7 @@ import { webhookRouter } from './routes/webhooks.js'
 import { apiRouter } from './routes/api.js'
 import { dashboardRouter } from './routes/dashboard.js'
 import { connectRouter } from './routes/connect.js'
+import { googleRouter } from './routes/google.js'
 import { pool } from './db/meta.js'
 import { applySchema } from './migrate.js'
 import { startWorkers } from './queue/jobs.js'
@@ -18,6 +19,7 @@ app.use('/oauth', oauthRouter)
 app.use('/api', apiRouter)
 app.use('/dashboard', dashboardRouter)
 app.use('/connect', connectRouter)
+app.use('/google', googleRouter)
 
 app.get('/healthz', async (_req, res) => {
   try {

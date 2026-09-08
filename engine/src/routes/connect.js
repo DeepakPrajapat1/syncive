@@ -232,6 +232,18 @@ function renderForm({ schema = 'hubspot', chosen = OBJECT_TYPES, form = {}, erro
   ${results}
 
   <div class="card">
+    <div class="row2" style="align-items:center">
+      <div><strong>Google Sheets instead?</strong>
+        <p class="hint" style="margin:.2rem 0 0">No password to hand over — you sign in with
+          Google and pick one spreadsheet. Syncive sees that file and nothing else in your Drive.</p>
+      </div>
+      <a class="ghost" href="/google/connect"
+         style="text-decoration:none;padding:.5rem .9rem;border:1px solid var(--border);
+                border-radius:.5rem;color:var(--accent);white-space:nowrap">Connect Google Sheets</a>
+    </div>
+  </div>
+
+  <div class="card">
     <strong>Make a user for Syncive first</strong>
     <p class="hint">Don't give Syncive your admin login. Run this in your database — it
       creates a user that can reach one schema and nothing else. Change the password.</p>

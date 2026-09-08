@@ -1,7 +1,8 @@
 import express from 'express'
 import { encrypt } from '../config.js'
 import { logEvent, query } from '../db/meta.js'
-import { closeDestPool, countRows, testConnection } from '../db/dest.js'
+import { closeDestPool, verifyDestination } from '../db/dest.js'
+import { forgetKind, total } from '../destinations/index.js'
 import { enqueueBackfill } from '../queue/jobs.js'
 import { reconcileSync } from '../reconcile.js'
 import { OBJECT_TYPES, revokeConnection, uninstallApp } from '../hubspot/client.js'
@@ -25,8 +26,14 @@ apiRouter.post('/destinations', wrap(async (req, res) => {
   const { dsn, schema_name = 'hubspot' } = req.body || {}
   if (!dsn) return res.status(400).json({ error: 'dsn is required' })
 
-  const probe = await testConnection(dsn)
-  if (!probe.ok) return res.status(400).json({ error: `Could not connect: ${probe.error}` })
+  const probe = await verifyDestination(dsn, schema_name)
+  if (!probe.ok) {
+    const failed = probe.steps.find((step) => !step.ok)
+    return res.status(400).json({
+      error: failed ? `${failed.name} — ${failed.detail || 'failed'}` : 'Could not connect',
+      steps: probe.steps,
+    })
+  }
 
   const { rows } = await query(
     `insert into syncive.destinations (account_id, dsn_enc, schema_name, status)
@@ -91,6 +98,7 @@ apiRouter.delete('/destinations/:destinationId', wrap(async (req, res) => {
     req.accountId,
   ])
   closeDestPool(destinationId)
+  forgetKind(destinationId)
 
   res.json({ removed: found[0].id, schema: found[0].schema_name, syncsRemoved: found[0].syncs })
 }))
@@ -316,12 +324,12 @@ apiRouter.get('/accounts/:accountId/health', requireOwnAccount, wrap(async (req,
 
 apiRouter.get('/syncs/:syncId/rows', requireOwnSync(), wrap(async (req, res) => {
   const { rows } = await query(
-    `select destination_id, object_type from syncive.syncs where id = $1`,
+    `select id, destination_id, object_type from syncive.syncs where id = $1`,
     [req.params.syncId]
   )
   if (!rows[0]) return res.status(404).json({ error: 'not found' })
   try {
-    const n = await countRows(rows[0].destination_id, rows[0].object_type)
+    const n = await total(rows[0], rows[0].object_type)
     res.json({ rows: n })
   } catch (err) {
     res.status(502).json({ error: err.message })

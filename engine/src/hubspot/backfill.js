@@ -1,5 +1,5 @@
 import { listPage, listProperties } from './client.js'
-import { provisionTable, upsertRecords } from '../db/dest.js'
+import { provision, write } from '../destinations/index.js'
 import { logEvent, query } from '../db/meta.js'
 
 const PAGE_SIZE = 100
@@ -21,7 +21,7 @@ export async function runBackfillChunk(syncId) {
   const properties = await listProperties(sync.connection_id, sync.object_type, {
     fresh: !sync.backfill_cursor,
   })
-  await provisionTable(sync.destination_id, sync.object_type, properties)
+  await provision(sync, sync.object_type, properties)
   const propNames = properties.map((p) => p.name)
 
   await query(`update syncive.syncs set state = 'backfilling' where id = $1 and state <> 'backfilling'`, [syncId])
@@ -38,7 +38,7 @@ export async function runBackfillChunk(syncId) {
     const records = data.results || []
 
     if (records.length) {
-      const written = await upsertRecords(sync.destination_id, sync.object_type, properties, records)
+      const written = await write(sync, sync.object_type, properties, records)
       total += written
       await logEvent(syncId, { kind: 'backfill_page', status: 'ok', recordCount: written })
     }

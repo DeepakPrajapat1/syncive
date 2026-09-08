@@ -1,5 +1,5 @@
 import { listProperties, searchModifiedSince } from './hubspot/client.js'
-import { upsertRecords } from './db/dest.js'
+import { write } from './destinations/index.js'
 import { logEvent, query } from './db/meta.js'
 
 // The safety net. Webhooks get dropped — by us, by them, by the network — and the
@@ -44,7 +44,7 @@ export async function reconcileSync(syncId, { lookbackMinutes = 90 } = {}) {
     if (!records.length) break
 
     scanned += records.length
-    repaired += await upsertRecords(sync.destination_id, sync.object_type, properties, records)
+    repaired += await write(sync, sync.object_type, properties, records)
 
     after = data.paging?.next?.after
   } while (after && scanned < 2000)

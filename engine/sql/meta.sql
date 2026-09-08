@@ -37,6 +37,27 @@ alter table syncive.hubspot_connections
 alter table syncive.syncs
   add column if not exists paused_by_user boolean not null default false;
 
+-- A destination is no longer always a database. Sheets destinations keep an
+-- encrypted JSON blob (Google refresh token, spreadsheet id, tab names) instead
+-- of a connection string, so the DSN cannot stay mandatory.
+alter table syncive.destinations
+  add column if not exists config_enc text;
+alter table syncive.destinations
+  alter column dsn_enc drop not null;
+
+-- Google Sheets has no upsert and no usable per-row identity: developer metadata
+-- is capped at 30,000 characters per sheet, which is roughly 700 tagged rows. So
+-- the mapping from HubSpot record to row number lives here, where it is cheap,
+-- and is reconciled against the sheet's own ID column when they disagree.
+create table if not exists syncive.sheet_rows (
+  sync_id       uuid not null references syncive.syncs(id) on delete cascade,
+  hubspot_id    text not null,
+  row_number    integer not null,
+  primary key (sync_id, hubspot_id)
+);
+create index if not exists sheet_rows_position_idx
+  on syncive.sheet_rows (sync_id, row_number);
+
 -- Where the data goes. The connection string is encrypted; we never log it.
 create table if not exists syncive.destinations (
   id            uuid primary key default gen_random_uuid(),

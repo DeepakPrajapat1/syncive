@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { config } from '../config.js'
 import { getRecord, listProperties, revokeConnection } from './client.js'
-import { markDeleted, upsertRecords } from '../db/dest.js'
+import { remove, write } from '../destinations/index.js'
 import { deadLetter, logEvent, query } from '../db/meta.js'
 
 // HubSpot v3 signature: sha256 over method + uri + body + timestamp, base64.
@@ -114,7 +114,7 @@ export async function applyEvent(event, { isFinalAttempt = true } = {}) {
 async function applyEventToSync(event, sync, isFinalAttempt) {
   try {
     if (event.isDelete) {
-      await markDeleted(sync.destination_id, sync.object_type, event.hubspotId)
+      await remove(sync, sync.object_type, event.hubspotId)
       await logEvent(sync.id, { kind: 'webhook', status: 'ok', recordCount: 1, hubspotId: event.hubspotId, message: 'deleted' })
       return { syncId: sync.id, applied: true }
     }
@@ -129,11 +129,11 @@ async function applyEventToSync(event, sync, isFinalAttempt) {
 
     if (!record) {
       // Record vanished between the event and our fetch — treat as a delete.
-      await markDeleted(sync.destination_id, sync.object_type, event.hubspotId)
+      await remove(sync, sync.object_type, event.hubspotId)
       return { syncId: sync.id, applied: true, note: 'gone' }
     }
 
-    await upsertRecords(sync.destination_id, sync.object_type, properties, [record])
+    await write(sync, sync.object_type, properties, [record])
     await query(`update syncive.syncs set last_event_at = now(), last_success_at = now() where id = $1`, [sync.id])
     await logEvent(sync.id, { kind: 'webhook', status: 'ok', recordCount: 1, hubspotId: event.hubspotId })
     return { syncId: sync.id, applied: true }

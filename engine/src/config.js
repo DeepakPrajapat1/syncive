@@ -62,6 +62,29 @@ export function requireHubspot() {
   return config.hubspot
 }
 
+// Google is a second OAuth provider, and the scope choice is the whole ballgame:
+// `drive.file` is non-sensitive, so the app needs no security assessment and has
+// no 100-user cap. Asking for `spreadsheets` instead would put us behind Google's
+// verification queue for a feature the Picker gives us for free.
+export const google = {
+  clientId: process.env.GOOGLE_CLIENT_ID || '',
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+  apiKey: process.env.GOOGLE_API_KEY || '',
+  scopes: ['https://www.googleapis.com/auth/drive.file'],
+  get redirectUri() {
+    return `${config.publicUrl}/oauth/google/callback`
+  },
+}
+
+export const googleConfigured = () => Boolean(google.clientId && google.clientSecret)
+
+export function requireGoogle() {
+  if (!googleConfigured()) {
+    throw new Error('Google is not configured yet — set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET')
+  }
+  return google
+}
+
 // ---- credential encryption (AES-256-GCM) ------------------------------------
 // Tokens and DSNs are encrypted before they touch disk. The key never leaves env.
 
