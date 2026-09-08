@@ -1,5 +1,9 @@
 -- Syncive engine metadata schema.
--- Lives in OUR database. Never holds customer CRM records — only wiring and logs.
+-- Lives in OUR database. Holds no copy of the customer's CRM: only wiring, logs,
+-- and — in dead_letters — the HubSpot notifications we could not deliver, which
+-- name a record and can carry the changed property's value. That table is the
+-- one place customer personal data can come to rest here, so it is pruned on a
+-- schedule (see src/retention.js) and is disclosed in the privacy policy.
 
 create schema if not exists syncive;
 

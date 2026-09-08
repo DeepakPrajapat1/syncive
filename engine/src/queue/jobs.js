@@ -3,12 +3,14 @@ import { config } from '../config.js'
 import { runBackfillChunk } from '../hubspot/backfill.js'
 import { applyEvent } from '../hubspot/webhooks.js'
 import { reconcileAll } from '../reconcile.js'
+import { pruneOldData } from '../retention.js'
 import { logEvent } from '../db/meta.js'
 
 export const QUEUES = {
   backfill: 'sync.backfill',
   webhook: 'sync.webhook',
   reconcile: 'sync.reconcile',
+  retention: 'sync.retention',
 }
 
 let boss
@@ -109,9 +111,12 @@ export async function startWorkers() {
   })
 
   await b.work(QUEUES.reconcile, async () => reconcileAll())
+  await b.work(QUEUES.retention, async () => pruneOldData())
 
   // Hourly drift check for every live sync.
   await b.schedule(QUEUES.reconcile, '0 * * * *')
+  // Daily, off the hour so it does not queue behind a reconcile.
+  await b.schedule(QUEUES.retention, '17 3 * * *')
 
   console.log('[worker] queues running:', Object.values(QUEUES).join(', '))
   return b

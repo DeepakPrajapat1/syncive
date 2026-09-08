@@ -238,8 +238,10 @@ const renderDashboard = (accountId) => `${HEAD}
 
   <div id="danger"></div>
 
-  <p class="note">Signed in through your HubSpot install. Syncive never stores your
-    CRM records &mdash; this page reads sync state and logs only.</p>
+  <p class="note">Signed in through your HubSpot install. Syncive keeps no copy of
+    your CRM &mdash; only sync state, a short event log, and changes that could not
+    be delivered, so they can be retried.<br>
+    <a href="/privacy">Privacy Policy</a> &middot; <a href="/terms">Terms of Service</a></p>
 </div>
 <script>
 (function(){

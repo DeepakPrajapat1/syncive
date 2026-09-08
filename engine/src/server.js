@@ -6,6 +6,7 @@ import { apiRouter } from './routes/api.js'
 import { dashboardRouter } from './routes/dashboard.js'
 import { connectRouter } from './routes/connect.js'
 import { googleRouter } from './routes/google.js'
+import { legalRouter } from './routes/legal.js'
 import { pool } from './db/meta.js'
 import { applySchema } from './migrate.js'
 import { startWorkers } from './queue/jobs.js'
@@ -20,6 +21,8 @@ app.use('/api', apiRouter)
 app.use('/dashboard', dashboardRouter)
 app.use('/connect', connectRouter)
 app.use('/google', googleRouter)
+// Public, session-free: reviewers open these as anonymous visitors.
+app.use(legalRouter)
 
 app.get('/healthz', async (_req, res) => {
   try {
