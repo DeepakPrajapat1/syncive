@@ -23,97 +23,238 @@ const esc = (value) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
 
+// Inline so the page stays a single request with no external asset host.
+const SHEETS_ICON =
+  '<svg viewBox="0 0 20 20" fill="none" stroke="#12885a" stroke-width="1.6" ' +
+  'stroke-linecap="round" stroke-linejoin="round">' +
+  '<rect x="3" y="2.5" width="14" height="15" rx="2"/>' +
+  '<path d="M3 8h14M3 12.5h14M8 8v9.5M13 8v9.5"/></svg>'
+
+const PG_ICON =
+  '<svg viewBox="0 0 20 20" fill="none" stroke="#2563eb" stroke-width="1.6" ' +
+  'stroke-linecap="round" stroke-linejoin="round">' +
+  '<ellipse cx="10" cy="5" rx="6.5" ry="2.75"/>' +
+  '<path d="M3.5 5v10c0 1.5 2.9 2.75 6.5 2.75s6.5-1.25 6.5-2.75V5"/>' +
+  '<path d="M3.5 10c0 1.5 2.9 2.75 6.5 2.75s6.5-1.25 6.5-2.75"/></svg>'
+
 const HEAD = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex,nofollow">
-<title>Sync health — Syncive</title>
+<title>Syncive</title>
 <style>
   :root{
-    --bg:#0b0e13; --panel:#131822; --border:#222a36; --text:#e9eef5;
-    --muted:#9fb0c3; --accent:#4c8dff;
-    --ok:#3ddc97; --warn:#f5b544; --bad:#ff6b6b;
+    --bg:#f7f8fa; --panel:#fff; --sunk:#fafbfc;
+    --border:#e4e7ec; --border-strong:#d0d5dd;
+    --text:#101828; --muted:#667085; --faint:#98a2b3;
+    --accent:#2563eb; --accent-soft:#eff4ff;
+    --ok:#12885a; --ok-soft:#e7f6ef;
+    --warn:#b54708; --warn-soft:#fef4e6;
+    --bad:#b42318; --bad-soft:#fdecea;
+    --shadow:0 1px 2px rgba(16,24,40,.05);
+    --shadow-lg:0 4px 16px -4px rgba(16,24,40,.1),0 2px 6px -2px rgba(16,24,40,.06);
   }
   *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
   body{margin:0;background:var(--bg);color:var(--text);
-       font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}
-  .wrap{max-width:56rem;margin:0 auto;padding:1.5rem 1rem 3rem}
-  header{display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:baseline;margin-bottom:1rem}
-  h1{font-size:1.25rem;margin:0}
-  .sub{color:var(--muted);font-size:.85rem}
-  .card{background:var(--panel);border:1px solid var(--border);border-radius:.75rem;
-        padding:1rem;margin-bottom:.75rem}
-  .banner{display:flex;flex-wrap:wrap;gap:.5rem .75rem;align-items:center;
-          border-left:4px solid var(--muted)}
-  .banner.ok{border-left-color:var(--ok)}
-  .banner.attention{border-left-color:var(--warn)}
-  .banner.bad{border-left-color:var(--bad)}
-  .banner strong{font-size:1.05rem}
-  .row{display:flex;flex-wrap:wrap;gap:.5rem .75rem;align-items:baseline;
-       justify-content:space-between}
-  .name{font-size:1rem;font-weight:600}
-  .pill{display:inline-block;font-size:.72rem;letter-spacing:.02em;text-transform:uppercase;
-        border:1px solid var(--border);border-radius:999px;padding:.1rem .5rem;color:var(--muted)}
-  .pill.ok{color:var(--ok);border-color:var(--ok)}
-  .pill.warn{color:var(--warn);border-color:var(--warn)}
-  .pill.bad{color:var(--bad);border-color:var(--bad)}
-  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(7.5rem,1fr));
-         gap:.5rem;margin-top:.75rem}
-  .stat{background:#0f141d;border:1px solid var(--border);border-radius:.5rem;padding:.5rem .6rem}
-  .stat .k{color:var(--muted);font-size:.72rem;text-transform:uppercase;letter-spacing:.03em}
-  .stat .v{font-size:1.05rem;font-variant-numeric:tabular-nums}
+       font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+       -webkit-font-smoothing:antialiased}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  /* ---- top bar ---- */
+  .topbar{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.85);
+          backdrop-filter:saturate(180%) blur(8px);border-bottom:1px solid var(--border)}
+  .topbar .inner{max-width:64rem;margin:0 auto;padding:.7rem 1.25rem;
+                 display:flex;align-items:center;gap:.75rem}
+  .brand{display:flex;align-items:center;gap:.5rem;font-weight:650;letter-spacing:-.01em}
+  .brand .mark{width:1.4rem;height:1.4rem;border-radius:.45rem;flex:none;
+        background:linear-gradient(140deg,#2563eb,#7c3aed);
+        box-shadow:0 1px 3px rgba(37,99,235,.4)}
+  .spacer{flex:1}
+  .chip{font-size:.76rem;color:var(--muted);background:var(--sunk);
+        border:1px solid var(--border);border-radius:999px;padding:.2rem .55rem;white-space:nowrap}
+
+  /* ---- layout ---- */
+  .wrap{max-width:64rem;margin:0 auto;padding:1.5rem 1.25rem 4rem}
+  .page-head{display:flex;align-items:flex-end;gap:1rem;flex-wrap:wrap;margin-bottom:1.1rem}
+  h1{font-size:1.5rem;line-height:1.2;margin:0;letter-spacing:-.02em}
+  .page-head .sub{color:var(--muted);font-size:.82rem}
+
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:.85rem;
+        box-shadow:var(--shadow);margin-bottom:1rem;overflow:hidden}
+
+  /* ---- status hero ---- */
+  .hero{display:flex;align-items:center;gap:.85rem;padding:1rem 1.15rem}
+  .hero .dot{width:.65rem;height:.65rem;border-radius:50%;flex:none;background:var(--faint)}
+  .hero.ok .dot{background:var(--ok);box-shadow:0 0 0 4px var(--ok-soft)}
+  .hero.attention .dot{background:var(--warn);box-shadow:0 0 0 4px var(--warn-soft)}
+  .hero.bad .dot{background:var(--bad);box-shadow:0 0 0 4px var(--bad-soft)}
+  .hero .txt{min-width:0}
+  .hero strong{display:block;font-size:1rem;letter-spacing:-.01em}
+  .hero .sub{color:var(--muted);font-size:.85rem}
+
+  /* ---- destination section ---- */
+  .dest-head{display:flex;align-items:center;gap:.75rem;padding:.9rem 1.15rem;
+             border-bottom:1px solid var(--border);background:var(--sunk)}
+  .icon{width:2.1rem;height:2.1rem;border-radius:.6rem;flex:none;display:grid;place-items:center;
+        background:#fff;border:1px solid var(--border);box-shadow:var(--shadow)}
+  .icon svg{width:1.1rem;height:1.1rem;display:block}
+  .dest-head .who{min-width:0;flex:1}
+  .dest-head .title{font-weight:620;letter-spacing:-.01em;white-space:nowrap;
+                    overflow:hidden;text-overflow:ellipsis}
+  .dest-head .meta{color:var(--muted);font-size:.79rem;white-space:nowrap;
+                   overflow:hidden;text-overflow:ellipsis}
+
+  /* ---- object rows ---- */
+  .obj{border-bottom:1px solid var(--border)}
+  .obj:last-child{border-bottom:0}
+  .obj-row{display:flex;align-items:center;gap:.75rem;padding:.75rem 1.15rem;cursor:pointer;
+           background:none;border:0;width:100%;text-align:left;font:inherit;color:inherit}
+  .obj-row:hover{background:var(--sunk)}
+  .obj-row .dot{width:.5rem;height:.5rem;border-radius:50%;flex:none;background:var(--faint)}
+  .obj-row .dot.ok{background:var(--ok)} .obj-row .dot.warn{background:var(--warn)}
+  .obj-row .dot.bad{background:var(--bad)}
+  .obj-name{font-weight:560;text-transform:capitalize;min-width:5.5rem}
+  .obj-row .fill{flex:1}
+  .obj-row .val{font-size:.82rem;color:var(--muted);font-variant-numeric:tabular-nums;
+                white-space:nowrap}
+  .obj-row .val b{color:var(--text);font-weight:560}
+  .chev{width:.9rem;height:.9rem;flex:none;color:var(--faint);transition:transform .15s}
+  .obj.open .chev{transform:rotate(90deg)}
+  .obj-body{display:none;padding:0 1.15rem 1rem;border-top:1px dashed var(--border)}
+  .obj.open .obj-body{display:block}
+
+  .badge{display:inline-block;font-size:.7rem;font-weight:600;letter-spacing:.01em;
+         border-radius:999px;padding:.12rem .5rem;background:var(--sunk);color:var(--muted);
+         border:1px solid var(--border);text-transform:capitalize}
+  .badge.ok{background:var(--ok-soft);color:var(--ok);border-color:transparent}
+  .badge.warn{background:var(--warn-soft);color:var(--warn);border-color:transparent}
+  .badge.bad{background:var(--bad-soft);color:var(--bad);border-color:transparent}
+
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(8rem,1fr));
+         gap:.5rem;margin:.9rem 0}
+  .stat{background:var(--sunk);border:1px solid var(--border);border-radius:.55rem;padding:.5rem .65rem}
+  .stat .k{color:var(--muted);font-size:.7rem;text-transform:uppercase;letter-spacing:.04em}
+  .stat .v{font-size:1rem;font-variant-numeric:tabular-nums;margin-top:.1rem}
   .v.ok{color:var(--ok)} .v.warn{color:var(--warn)} .v.bad{color:var(--bad)}
-  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:.75rem}
-  table{border-collapse:collapse;width:100%;min-width:32rem;font-size:.82rem}
-  th,td{text-align:left;padding:.35rem .5rem;border-bottom:1px solid var(--border);
+
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;
+          border:1px solid var(--border);border-radius:.55rem}
+  table{border-collapse:collapse;width:100%;min-width:30rem;font-size:.8rem}
+  th,td{text-align:left;padding:.4rem .6rem;border-bottom:1px solid var(--border);
         vertical-align:top;white-space:nowrap}
-  td.msg{white-space:normal;color:var(--muted);max-width:22rem}
-  th{color:var(--muted);font-weight:500}
-  button{font:inherit;font-size:.85rem;background:var(--accent);color:#06101f;border:0;
-         border-radius:.4rem;padding:.4rem .8rem;cursor:pointer}
-  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--border)}
-  button[disabled]{opacity:.55;cursor:default}
-  .actions{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin-top:.75rem}
-  .result{font-size:.82rem;color:var(--muted)}
+  tr:last-child td{border-bottom:0}
+  td.msg{white-space:normal;color:var(--muted);max-width:20rem}
+  th{color:var(--muted);font-weight:500;background:var(--sunk);font-size:.72rem;
+     text-transform:uppercase;letter-spacing:.04em}
+
+  /* ---- buttons ---- */
+  button{font:inherit;font-size:.83rem;font-weight:540;cursor:pointer;border-radius:.45rem;
+         padding:.4rem .75rem;border:1px solid transparent;transition:background .12s,border-color .12s}
+  .btn-primary{background:var(--accent);color:#fff}
+  .btn-primary:hover{background:#1d4ed8}
+  .btn{background:#fff;color:var(--text);border-color:var(--border-strong);box-shadow:var(--shadow)}
+  .btn:hover{background:var(--sunk)}
+  .btn-quiet{background:none;color:var(--muted);padding:.3rem .5rem}
+  .btn-quiet:hover{background:var(--sunk);color:var(--text)}
+  .btn-danger{color:var(--bad)}
+  .btn-danger:hover{background:var(--bad-soft)}
+  button[disabled]{opacity:.5;cursor:default}
+  .actions{display:flex;flex-wrap:wrap;gap:.45rem;align-items:center;margin-top:.85rem}
+  .result{font-size:.8rem;color:var(--muted)}
   .result.ok{color:var(--ok)} .result.bad{color:var(--bad)}
-  .note{color:var(--muted);font-size:.78rem;border-top:1px solid var(--border);
-        margin-top:1.5rem;padding-top:.75rem}
-  code{color:var(--accent)}
-  input{font:inherit;background:#0f141d;color:var(--text);border:1px solid var(--border);
-        border-radius:.4rem;padding:.45rem .6rem;width:100%}
-  label{display:block;font-size:.85rem;color:var(--muted);margin-bottom:.35rem}
-  form{max-width:26rem}
-  .empty{color:var(--muted)}
+
+  /* ---- add destination ---- */
+  .add{display:flex;gap:.75rem;flex-wrap:wrap;padding:1.05rem 1.15rem}
+  .add-opt{flex:1 1 15rem;display:flex;align-items:center;gap:.7rem;padding:.75rem .85rem;
+           border:1px solid var(--border);border-radius:.65rem;background:var(--panel);
+           color:inherit;text-decoration:none;transition:border-color .12s,box-shadow .12s}
+  .add-opt:hover{border-color:var(--accent);box-shadow:var(--shadow-lg);text-decoration:none}
+  .add-opt .title{font-weight:580;font-size:.9rem}
+  .add-opt .meta{color:var(--muted);font-size:.78rem}
+
+  .section-label{font-size:.74rem;text-transform:uppercase;letter-spacing:.06em;
+                 color:var(--faint);font-weight:600;margin:1.6rem 0 .55rem}
+  .pad{padding:1.05rem 1.15rem}
+  .sub{color:var(--muted);font-size:.85rem}
+  .warn-strip{display:flex;gap:.6rem;align-items:flex-start;padding:.7rem 1.15rem;
+              background:var(--warn-soft);color:var(--warn);font-size:.82rem;
+              border-bottom:1px solid var(--border)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85em;
+       background:var(--sunk);border:1px solid var(--border);border-radius:.3rem;padding:.05rem .3rem}
+  .note{color:var(--faint);font-size:.78rem;text-align:center;margin-top:2rem}
+  .skeleton{height:.85rem;border-radius:.3rem;background:linear-gradient(90deg,#eceff3,#f5f7f9,#eceff3);
+            background-size:200% 100%;animation:sh 1.2s linear infinite}
+  @keyframes sh{to{background-position:-200% 0}}
+  @media (max-width:36rem){
+    .obj-row .val.hide-sm{display:none}
+    .wrap{padding:1rem .85rem 3rem}
+    .topbar .inner{padding:.6rem .85rem}
+  }
 </style>`
 
 // JSON.stringify alone can still emit "</script>" and break out of the block.
 const jsonForScript = (value) =>
   JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026')
 
-const NOTE = `<p class="note">Signed in through your HubSpot install. Syncive never
-  stores your CRM records; this page reads sync state and logs only.</p>`
-
 const renderDashboard = (accountId) => `${HEAD}
+<div class="topbar"><div class="inner">
+  <span class="brand"><span class="mark"></span>Syncive</span>
+  <span class="spacer"></span>
+  <span class="chip">Account &hellip;${esc(accountId.slice(-4))}</span>
+  <a class="chip" href="/oauth/signout">Sign out</a>
+</div></div>
+
 <div class="wrap">
-  <header>
-    <h1>Sync health</h1>
-    <span class="sub">account &hellip;${esc(accountId.slice(-4))}</span>
+  <div class="page-head">
+    <h1>Syncs</h1>
+    <span class="spacer"></span>
     <span class="sub" id="updated">Loading&hellip;</span>
-  </header>
-  <div id="banner" class="card banner"><strong>Loading…</strong>
-    <span class="sub">Fetching current sync state.</span></div>
-  <div id="syncs"></div>
-  <div id="destinations"></div>
+  </div>
+
+  <div id="hero" class="card hero">
+    <span class="dot"></span>
+    <span class="txt"><strong>Checking your syncs&hellip;</strong>
+      <span class="sub skeleton" style="width:12rem;display:block;margin-top:.35rem"></span></span>
+  </div>
+
+  <div id="body"></div>
+
+  <div class="section-label">Add a destination</div>
+  <div class="card"><div class="add">
+    <a class="add-opt" href="/google/connect">
+      <span class="icon">${SHEETS_ICON}</span>
+      <span><span class="title">Google Sheets</span><br>
+        <span class="meta">A live spreadsheet, created for you</span></span>
+    </a>
+    <a class="add-opt" href="/connect">
+      <span class="icon">${PG_ICON}</span>
+      <span><span class="title">Postgres database</span><br>
+        <span class="meta">Your own Supabase, RDS or server</span></span>
+    </a>
+  </div></div>
+
   <div id="danger"></div>
-  ${NOTE}
+
+  <p class="note">Signed in through your HubSpot install. Syncive never stores your
+    CRM records &mdash; this page reads sync state and logs only.</p>
 </div>
 <script>
 (function(){
   var ACCOUNT = ${jsonForScript(accountId)};
-  var banner = document.getElementById('banner');
-  var list = document.getElementById('syncs');
+  var ICONS = ${jsonForScript({ sheets: SHEETS_ICON, postgres: PG_ICON })};
+  var hero = document.getElementById('hero');
+  var body = document.getElementById('body');
+  var dangerBox = document.getElementById('danger');
   var updated = document.getElementById('updated');
+
+  var HEALTH = null, DESTS = null, CONNECTION = null, REVOKED = false;
+  // Which object rows the customer has opened. Kept across the 30s refresh —
+  // a panel that closes itself while you are reading it is the fastest way to
+  // make a dashboard feel broken.
+  var OPEN = {};
 
   function esc(v){
     return String(v === null || v === undefined ? '' : v)
@@ -134,286 +275,144 @@ const renderDashboard = (accountId) => `${HEAD}
   function tone(h){
     if(h === 'healthy') return 'ok';
     if(h === 'stale') return 'warn';
-    if(h === 'paused' || h === 'disconnected') return '';
-    return 'bad';
+    if(h === 'degraded') return 'bad';
+    return '';
   }
   function num(n){ return Number(n || 0).toLocaleString(); }
+  function plural(n, word){ return n + ' ' + word + (n === 1 ? '' : 's'); }
 
-  function setBanner(cls, title, detail){
-    banner.className = 'card banner ' + cls;
-    banner.innerHTML = '<strong>' + esc(title) + '</strong><span class="sub">' + esc(detail) + '</span>';
+  var CHEV = '<svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M6 3l5 5-5 5"/></svg>';
+
+  function setHero(cls, title, detail){
+    hero.className = 'card hero ' + cls;
+    hero.innerHTML = '<span class="dot"></span><span class="txt"><strong>' + esc(title) +
+      '</strong><span class="sub">' + esc(detail) + '</span></span>';
   }
 
-  function renderSync(s){
+  // ---- one object row (contacts / companies / deals) ------------------------
+
+  function renderObject(s){
     var t = tone(s.health);
     var failed = Number(s.events_failed_24h || 0);
     var dead = Number(s.unresolved_failures || 0);
-    var html = '';
-    html += '<div class="card" data-sync="' + esc(s.id) + '">';
-    html += '<div class="row"><span class="name">' + esc(s.object_type) + '</span>';
-    html += '<span>';
-    // 'live' next to 'disconnected' is a contradiction. The backfill state only
-    // means anything while the sync is actually running.
-    if(s.health !== 'disconnected' && s.health !== 'paused'){
-      html += '<span class="pill">' + esc(s.state) + '</span> ';
-    }
-    html += '<span class="pill ' + t + '">' + esc(s.health) + '</span></span></div>';
-    html += '<div class="stats">';
-    html += '<div class="stat"><div class="k">Last success</div><div class="v ' +
-            (s.last_success_at ? '' : 'warn') + '">' + esc(ago(s.last_success_at)) + '</div></div>';
-    html += '<div class="stat"><div class="k">Last event</div><div class="v">' +
-            esc(ago(s.last_event_at)) + '</div></div>';
-    html += '<div class="stat"><div class="k">Records 24h</div><div class="v">' +
-            esc(num(s.records_synced_24h)) + '</div></div>';
-    html += '<div class="stat"><div class="k">OK events 24h</div><div class="v ok">' +
-            esc(num(s.events_ok_24h)) + '</div></div>';
-    html += '<div class="stat"><div class="k">Failed 24h</div><div class="v ' +
-            (failed ? 'bad' : '') + '">' + esc(num(failed)) + '</div></div>';
-    html += '<div class="stat"><div class="k">Dead letters</div><div class="v ' +
-            (dead ? 'bad' : '') + '">' + esc(num(dead)) + '</div></div>';
-    html += '<div class="stat"><div class="k">Destination schema</div><div class="v">' +
-            esc(s.schema_name) + '</div></div>';
-    html += '</div>';
+    var open = OPEN[s.id] ? ' open' : '';
+    var h = '<div class="obj' + open + '" data-sync="' + esc(s.id) + '">';
+
+    h += '<button class="obj-row" type="button">';
+    h += '<span class="dot ' + t + '"></span>';
+    h += '<span class="obj-name">' + esc(s.object_type) + '</span>';
+    h += '<span class="badge ' + t + '">' + esc(s.health) + '</span>';
+    h += '<span class="fill"></span>';
+    h += '<span class="val hide-sm"><b>' + esc(num(s.records_synced_24h)) +
+         '</b> records / 24h</span>';
+    h += '<span class="val">' + esc(ago(s.last_success_at)) + '</span>';
+    h += CHEV + '</button>';
+
+    h += '<div class="obj-body">';
+    h += '<div class="stats">';
+    h += '<div class="stat"><div class="k">Last success</div><div class="v ' +
+         (s.last_success_at ? '' : 'warn') + '">' + esc(ago(s.last_success_at)) + '</div></div>';
+    h += '<div class="stat"><div class="k">Last event</div><div class="v">' +
+         esc(ago(s.last_event_at)) + '</div></div>';
+    h += '<div class="stat"><div class="k">Records 24h</div><div class="v">' +
+         esc(num(s.records_synced_24h)) + '</div></div>';
+    h += '<div class="stat"><div class="k">OK events 24h</div><div class="v ok">' +
+         esc(num(s.events_ok_24h)) + '</div></div>';
+    h += '<div class="stat"><div class="k">Failed 24h</div><div class="v ' +
+         (failed ? 'bad' : '') + '">' + esc(num(failed)) + '</div></div>';
+    h += '<div class="stat"><div class="k">Dead letters</div><div class="v ' +
+         (dead ? 'bad' : '') + '">' + esc(num(dead)) + '</div></div>';
+    h += '</div>';
 
     var recent = s.recent || [];
     if(recent.length){
-      html += '<div class="scroll"><table><thead><tr><th>When</th><th>Kind</th>' +
-              '<th>Status</th><th>Records</th><th>Message</th></tr></thead><tbody>';
+      h += '<div class="scroll"><table><thead><tr><th>When</th><th>Kind</th>' +
+           '<th>Status</th><th>Records</th><th>Message</th></tr></thead><tbody>';
       for(var i=0;i<recent.length;i++){
         var e = recent[i];
         var st = e.status === 'ok' ? 'ok' : e.status === 'failed' ? 'bad' : 'warn';
-        html += '<tr><td>' + esc(ago(e.created_at)) + '</td><td>' + esc(e.kind) + '</td>' +
-                '<td class="v ' + st + '">' + esc(e.status) + '</td>' +
-                '<td>' + esc(num(e.record_count)) + '</td>' +
-                '<td class="msg">' + esc(e.message || '') + '</td></tr>';
+        h += '<tr><td>' + esc(ago(e.created_at)) + '</td><td>' + esc(e.kind) + '</td>' +
+             '<td class="v ' + st + '">' + esc(e.status) + '</td>' +
+             '<td>' + esc(num(e.record_count)) + '</td>' +
+             '<td class="msg">' + esc(e.message || '') + '</td></tr>';
       }
-      html += '</tbody></table></div>';
+      h += '</tbody></table></div>';
     } else {
-      html += '<p class="result">No sync events recorded yet.</p>';
+      h += '<p class="sub">No sync events recorded yet.</p>';
     }
 
-    html += '<div class="actions">';
+    h += '<div class="actions">';
     if(s.revoked_at){
-      html += '<button class="ghost" disabled>Reinstall in HubSpot to resume</button>';
+      h += '<button class="btn" disabled>Reinstall in HubSpot to resume</button>';
     } else if(s.enabled === false){
-      html += '<button class="ghost resume">Resume sync</button>';
+      h += '<button class="btn-primary resume">Resume sync</button>';
     } else {
-      html += '<button class="retry"' + (dead ? '' : ' disabled') + '>Retry ' +
-              esc(num(dead)) + ' failed record' + (dead === 1 ? '' : 's') + '</button>';
-      html += '<button class="ghost count">Count rows in destination</button>';
-      html += '<button class="ghost pause">Pause sync</button>';
+      h += '<button class="btn retry"' + (dead ? '' : ' disabled') + '>Retry ' +
+           esc(plural(dead, 'failed record')) + '</button>';
+      h += '<button class="btn count">Count rows in destination</button>';
+      h += '<button class="btn-quiet pause">Pause</button>';
     }
-    html += '<span class="result"></span></div>';
-    html += '</div>';
-    return html;
+    h += '<span class="result"></span></div>';
+    h += '</div></div>';
+    return h;
   }
 
-  function wire(){
-    var cards = list.querySelectorAll('[data-sync]');
-    for(var i=0;i<cards.length;i++){
-      (function(card){
-        var id = card.getAttribute('data-sync');
-        var out = card.querySelector('.result');
-        var pauseBtn = card.querySelector('.pause');
-        if(pauseBtn) pauseBtn.addEventListener('click', function(){
-          var btn = this; btn.disabled = true;
-          out.className = 'result'; out.textContent = 'Pausing\u2026';
-          post(id, 'pause', out, btn, 'Pause sync');
-        });
-        var resumeBtn = card.querySelector('.resume');
-        if(resumeBtn) resumeBtn.addEventListener('click', function(){
-          var btn = this; btn.disabled = true;
-          out.className = 'result'; out.textContent = 'Resuming\u2026';
-          post(id, 'resume', out, btn, 'Resume sync');
-        });
+  // ---- one destination, with its objects grouped under it -------------------
 
-        var retryBtn = card.querySelector('.retry');
-        if(retryBtn) retryBtn.addEventListener('click', function(){
-          var btn = this; btn.disabled = true;
-          out.className = 'result'; out.textContent = 'Requeueing…';
-          fetch('/api/syncs/' + encodeURIComponent(id) + '/retry-failures', {method:'POST'})
-            .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
-            .then(function(r){
-              if(r.s >= 400) throw new Error(r.s + ' ' + (r.j && r.j.error || 'retry failed'));
-              out.className = 'result ok';
-              out.textContent = 'Requeued ' + Number(r.j.requeued || 0) + ' record(s). Refreshing…';
-              load();
-            })
-            .catch(function(err){
-              out.className = 'result bad'; out.textContent = String(err.message || err);
-              btn.disabled = false;
-            });
-        });
-        var countBtn = card.querySelector('.count');
-        if(countBtn) countBtn.addEventListener('click', function(){
-          var btn = this; btn.disabled = true;
-          out.className = 'result'; out.textContent = 'Counting…';
-          fetch('/api/syncs/' + encodeURIComponent(id) + '/rows')
-            .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
-            .then(function(r){
-              if(r.s >= 400) throw new Error(r.s + ' ' + (r.j && r.j.error || 'count failed'));
-              out.className = 'result ok';
-              out.textContent = Number(r.j.rows || 0).toLocaleString() + ' rows in destination.';
-            })
-            .catch(function(err){
-              out.className = 'result bad'; out.textContent = String(err.message || err);
-            })
-            .then(function(){ btn.disabled = false; });
-        });
-      })(cards[i]);
+  function renderDestination(dest, syncs, showRemove){
+    var icon = ICONS[dest.kind] || ICONS.postgres;
+    var live = 0;
+    for(var i=0;i<syncs.length;i++) if(syncs[i].last_success_at) live++;
+
+    var meta = dest.kind === 'sheets'
+      ? (dest.url ? '<a href="' + esc(dest.url) + '" target="_blank" rel="noopener">Open spreadsheet &#8599;</a>'
+                  : 'Spreadsheet not created yet')
+      : 'Postgres &middot; schema <code>' + esc(dest.schema_name) + '</code>';
+    meta += ' &middot; ' + (syncs.length ? plural(syncs.length, 'object') : 'no objects yet') +
+            (live ? ' &middot; ' + live + ' with data' : '');
+
+    var h = '<div class="card" data-dest="' + esc(dest.id) + '">';
+    h += '<div class="dest-head"><span class="icon">' + icon + '</span>';
+    h += '<span class="who"><div class="title">' + esc(dest.label || dest.schema_name) +
+         '</div><div class="meta">' + meta + '</div></span>';
+    if(showRemove) h += '<button class="btn-quiet btn-danger remove">Remove</button>';
+    h += '</div>';
+    if(showRemove === 'dup'){
+      h += '<div class="warn-strip">This destination writes the same HubSpot changes a ' +
+           'second time. Removing it stops Syncive writing through it &mdash; your own ' +
+           'tables and rows are left exactly as they are.</div>';
     }
-  }
-
-  var destBox = document.getElementById('destinations');
-  var dangerBox = document.getElementById('danger');
-  var CONNECTION = null;
-  var REVOKED = false;
-
-  // A mis-click during setup can leave a second destination writing the same
-  // rows into the same schema — three times the HubSpot calls and three times
-  // the database connections, for one copy of the data. Until you can see the
-  // destinations you cannot tell that is what is happening.
-  function renderDestinations(list){
-    if(list.length < 2){ destBox.innerHTML = ''; renderDanger(); return; }
-
-    var html = '<div class="card"><div class="row"><span class="name">Destinations</span>' +
-      '<span class="pill bad">' + list.length + ' configured</span></div>' +
-      '<p class="sub">More than one destination means every HubSpot change is written ' +
-      'more than once. Removing one stops Syncive writing through it — your own tables ' +
-      'and rows are left exactly as they are.</p>';
-
-    for(var i=0;i<list.length;i++){
-      var d = list[i];
-      var syncs = d.syncs || [];
-      var live = 0;
-      for(var k=0;k<syncs.length;k++) if(syncs[k].last_success_at) live++;
-      html += '<div class="row" data-dest="' + esc(d.id) + '">';
-      html += '<span><code>' + esc(d.schema_name) + '</code> ' +
-              '<span class="sub">' + esc(d.id.slice(0,8)) + '… &middot; ' +
-              syncs.length + ' sync' + (syncs.length === 1 ? '' : 's') + ' &middot; ' +
-              (live ? live + ' with data' : 'never synced') + '</span></span>';
-      html += '<span><button class="ghost remove">Remove</button> ' +
-              '<span class="result"></span></span></div>';
+    h += '<div class="dest-result" style="padding:0 1.15rem"></div>';
+    if(!syncs.length){
+      h += '<div class="pad sub">No objects are syncing into this destination yet.</div>';
+    } else {
+      for(var j=0;j<syncs.length;j++) h += renderObject(syncs[j]);
     }
-    destBox.innerHTML = html + '</div>';
-    renderDanger(true);
-
-    var rows = destBox.querySelectorAll('[data-dest]');
-    for(var r=0;r<rows.length;r++){
-      (function(row){
-        var id = row.getAttribute('data-dest');
-        var out = row.querySelector('.result');
-        var btn = row.querySelector('.remove');
-        btn.addEventListener('click', function(){
-          // Two clicks, not a confirm() — a modal dialog blocks the page and is
-          // the one thing this dashboard must never do mid-refresh.
-          if(btn.dataset.armed !== '1'){
-            btn.dataset.armed = '1';
-            btn.textContent = 'Click again to remove';
-            out.className = 'result'; out.textContent = 'This deletes its syncs and their history.';
-            setTimeout(function(){
-              if(btn.dataset.armed !== '1') return;
-              btn.dataset.armed = ''; btn.textContent = 'Remove';
-              out.textContent = '';
-            }, 6000);
-            return;
-          }
-          btn.dataset.armed = ''; btn.disabled = true; btn.textContent = 'Removing…';
-          fetch('/api/destinations/' + encodeURIComponent(id), {method:'DELETE'})
-            .then(function(res){ return res.json().then(function(j){ return {s:res.status,j:j}; }); })
-            .then(function(res){
-              if(res.s >= 400) throw new Error(res.j && res.j.error || ('HTTP ' + res.s));
-              out.className = 'result ok';
-              out.textContent = 'Removed, with ' + Number(res.j.syncsRemoved || 0) + ' sync(s).';
-              load();
-            })
-            .catch(function(err){
-              out.className = 'result bad'; out.textContent = String(err.message || err);
-              btn.disabled = false; btn.textContent = 'Remove';
-            });
-        });
-      })(rows[r]);
-    }
+    h += '</div>';
+    return h;
   }
 
-  // Leaving has to be as visible as arriving. A customer who cannot find the way
-  // out uninstalls in HubSpot instead and never tells you why.
-  function renderDanger(append){
-    if(!CONNECTION || REVOKED){ if(!append) dangerBox.innerHTML = ''; return; }
-    dangerBox.innerHTML =
-      '<div class="card"><div class="row"><span class="name">Disconnect HubSpot</span>' +
-      '<span><button class="ghost disconnect">Disconnect</button> ' +
-      '<span class="result"></span></span></div>' +
-      '<p class="sub">Stops all syncing, removes Syncive from your HubSpot account and ' +
-      'deletes the credentials it holds. HubSpot emails your admins to confirm. ' +
-      'Your database is left exactly as it is — every row already written stays. ' +
-      'Installing again starts it back up.</p></div>';
+  // ---- render ---------------------------------------------------------------
 
-    var btn = dangerBox.querySelector('.disconnect');
-    var out = dangerBox.querySelector('.result');
-    btn.addEventListener('click', function(){
-      if(btn.dataset.armed !== '1'){
-        btn.dataset.armed = '1';
-        btn.textContent = 'Click again to disconnect';
-        out.className = 'result';
-        out.textContent = 'Syncive is removed from HubSpot. Your data stays.';
-        setTimeout(function(){
-          if(btn.dataset.armed !== '1') return;
-          btn.dataset.armed = ''; btn.textContent = 'Disconnect'; out.textContent = '';
-        }, 6000);
-        return;
-      }
-      btn.dataset.armed = ''; btn.disabled = true; btn.textContent = 'Disconnecting\u2026';
-      fetch('/api/connections/' + encodeURIComponent(CONNECTION) + '/disconnect', {method:'POST'})
-        .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
-        .then(function(r){
-          if(r.s >= 400) throw new Error(r.j && r.j.error || ('HTTP ' + r.s));
-          load();
-        })
-        .catch(function(err){
-          out.className = 'result bad'; out.textContent = String(err.message || err);
-          btn.disabled = false; btn.textContent = 'Disconnect';
-        });
-    });
-  }
-
-  function loadDestinations(){
-    fetch('/api/destinations', {headers:{accept:'application/json'}})
-      .then(function(r){ return r.ok ? r.json() : null; })
-      .then(function(j){ if(j) renderDestinations(j.destinations || []); })
-      .catch(function(){ /* the sync cards are the page; this section is a bonus */ });
-  }
-
-  // Pause and resume are the same shape: fire, report, reload.
-  function post(id, action, out, btn, label){
-    fetch('/api/syncs/' + encodeURIComponent(id) + '/' + action, {method:'POST'})
-      .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
-      .then(function(r){
-        if(r.s >= 400) throw new Error(r.j && r.j.error || ('HTTP ' + r.s));
-        load();
-      })
-      .catch(function(err){
-        out.className = 'result bad'; out.textContent = String(err.message || err);
-        btn.disabled = false; btn.textContent = label;
-      });
-  }
-
-  function render(data){
-    var syncs = (data && data.syncs) || [];
+  function render(){
+    if(!HEALTH) return;
+    var syncs = HEALTH.syncs || [];
     CONNECTION = syncs.length ? syncs[0].connection_id : null;
     REVOKED = syncs.some(function(s){ return s.revoked_at; });
-    updated.textContent = 'Updated ' + new Date().toLocaleTimeString() + ' — refreshes every 30s';
+    updated.textContent = 'Updated ' + new Date().toLocaleTimeString() + ' \u00b7 refreshes every 30s';
 
-    if(!syncs.length){
-      setBanner('', 'No syncs yet',
-        'This account has no syncs configured.');
-      list.innerHTML = '<div class="card empty"><p>Nothing is flowing yet. Connect a HubSpot ' +
-        'portal at <code>/oauth/install</code>, register a destination database with ' +
-        '<code>POST /api/destinations</code>, then create syncs with <code>POST /api/syncs</code>. ' +
-        'This page will start reporting as soon as the first backfill runs.</p></div>';
+    if(!syncs.length && DESTS && !DESTS.length){
+      setHero('', 'Nothing syncing yet',
+        'Pick a destination below and Syncive will backfill your HubSpot records into it.');
+      body.innerHTML = '';
+      renderDanger();
       return;
     }
 
+    // Headline first. A paused or disconnected sync is not a fault, so it never
+    // gets the red treatment.
     var bad = 0, staleN = 0, pausedN = 0, gone = null;
     for(var i=0;i<syncs.length;i++){
       if(syncs[i].health === 'degraded') bad++;
@@ -421,64 +420,225 @@ const renderDashboard = (accountId) => `${HEAD}
       else if(syncs[i].health === 'paused') pausedN++;
       else if(syncs[i].health === 'disconnected') gone = syncs[i];
     }
-    // Say this before anything else: nothing below is going to update, and the
-    // reason is not a fault.
     if(gone){
       var why = gone.revoked_reason || 'Access to this portal was revoked';
       if(!/[.!?]$/.test(why)) why += '.';
-      setBanner('', 'HubSpot disconnected',
-        why + ' Your tables and rows are untouched — reinstall Syncive in HubSpot to start syncing again.');
-      renderCards(syncs);
-      return;
+      setHero('', 'HubSpot disconnected', why + ' Your data is untouched \u2014 ' +
+        'reinstall Syncive in HubSpot to start syncing again.');
+    } else if(bad){
+      setHero('bad', 'Attention needed',
+        bad + ' of ' + syncs.length + ' objects have failed events or undelivered records.');
+    } else if(staleN){
+      setHero('attention', plural(staleN, 'object') + ' behind',
+        'No successful sync in over 3 hours. The hourly reconcile will retry on its own.');
+    } else if(pausedN && pausedN === syncs.length){
+      setHero('', 'All syncs paused', 'Nothing is being written. Resume any object to start again.');
+    } else {
+      setHero('ok', 'Everything is in sync',
+        plural(syncs.length - pausedN, 'object') + ' flowing' +
+        (pausedN ? ', ' + pausedN + ' paused' : '') + ', no unresolved failures.');
     }
-    if(bad) setBanner('bad', 'Attention needed',
-      bad + ' of ' + syncs.length + ' syncs are degraded — failed events or undelivered records.');
-    else if(staleN) setBanner('attention', 'Sync is stale',
-      staleN + ' of ' + syncs.length + ' syncs have not succeeded in over 3 hours.');
-    else if(pausedN === syncs.length) setBanner('', 'All syncs paused',
-      'Nothing is being written. Resume any sync to start again.');
-    else setBanner('ok', 'All syncs healthy',
-      (syncs.length - pausedN) + ' sync' + (syncs.length - pausedN === 1 ? '' : 's') + ' flowing' +
-      (pausedN ? ', ' + pausedN + ' paused' : '') + ', no unresolved failures.');
 
-    renderCards(syncs);
-  }
+    // Group by destination. Without this, three objects synced into two places
+    // read as six identical cards called "contacts", "companies", "deals".
+    var dests = DESTS || [];
+    var byId = {};
+    for(var d=0;d<dests.length;d++) byId[dests[d].id] = { dest: dests[d], syncs: [] };
+    var orphans = [];
+    for(var s2=0;s2<syncs.length;s2++){
+      var g = byId[syncs[s2].destination_id];
+      if(g) g.syncs.push(syncs[s2]); else orphans.push(syncs[s2]);
+    }
+    // Removing the last destination is refused by the API, so only offer it when
+    // there is more than one — and say why when the extra one is a duplicate.
+    var schemas = {};
+    for(var k=0;k<dests.length;k++){
+      var key = dests[k].kind + ':' + dests[k].schema_name;
+      schemas[key] = (schemas[key] || 0) + 1;
+    }
 
-  function renderCards(syncs){
     var html = '';
-    for(var j=0;j<syncs.length;j++) html += renderSync(syncs[j]);
-    list.innerHTML = html;
+    for(var n=0;n<dests.length;n++){
+      var dd = dests[n];
+      var dup = schemas[dd.kind + ':' + dd.schema_name] > 1;
+      html += renderDestination(dd, byId[dd.id].syncs, dests.length > 1 ? (dup ? 'dup' : true) : false);
+    }
+    if(orphans.length){
+      html += renderDestination(
+        { id: 'orphans', kind: 'postgres', label: orphans[0].schema_name,
+          schema_name: orphans[0].schema_name }, orphans, false);
+    }
+    body.innerHTML = html;
     wire();
-    // The connection id only becomes known here, so the exit is drawn here too.
     renderDanger();
   }
 
+  // ---- wiring ---------------------------------------------------------------
+
+  function call(url, opts, out, btn, label, onOk){
+    return fetch(url, opts || {})
+      .then(function(r){ return r.text().then(function(t){
+        var j = null; try { j = JSON.parse(t); } catch(e){}
+        if(r.status >= 400) throw new Error((j && j.error) || ('HTTP ' + r.status));
+        return j || {};
+      }); })
+      .then(onOk)
+      .catch(function(err){
+        out.className = 'result bad'; out.textContent = String(err.message || err);
+        if(btn){ btn.disabled = false; if(label) btn.textContent = label; }
+      });
+  }
+
+  // Two clicks, not a confirm() — a modal dialog blocks the page and is the one
+  // thing this dashboard must never do mid-refresh.
+  function arm(btn, out, label, warning, run){
+    btn.addEventListener('click', function(ev){
+      ev.stopPropagation();
+      if(btn.dataset.armed !== '1'){
+        btn.dataset.armed = '1';
+        btn.textContent = 'Click again to confirm';
+        out.className = 'result'; out.textContent = warning;
+        setTimeout(function(){
+          if(btn.dataset.armed !== '1') return;
+          btn.dataset.armed = ''; btn.textContent = label; out.textContent = '';
+        }, 6000);
+        return;
+      }
+      btn.dataset.armed = ''; btn.disabled = true; btn.textContent = 'Working\u2026';
+      run(btn, out);
+    });
+  }
+
+  function wire(){
+    var objs = body.querySelectorAll('[data-sync]');
+    for(var i=0;i<objs.length;i++){
+      (function(card){
+        var id = card.getAttribute('data-sync');
+        var out = card.querySelector('.result');
+
+        card.querySelector('.obj-row').addEventListener('click', function(){
+          var nowOpen = !card.classList.contains('open');
+          card.classList.toggle('open', nowOpen);
+          if(nowOpen) OPEN[id] = true; else delete OPEN[id];
+        });
+        // Clicks on the buttons inside the panel must not fold it back up.
+        card.querySelector('.obj-body').addEventListener('click', function(ev){
+          ev.stopPropagation();
+        });
+
+        function simple(sel, verb, action){
+          var btn = card.querySelector(sel);
+          if(!btn) return;
+          btn.addEventListener('click', function(){
+            btn.disabled = true; out.className = 'result'; out.textContent = verb + '\u2026';
+            call('/api/syncs/' + encodeURIComponent(id) + '/' + action, {method:'POST'},
+              out, btn, null, function(){ load(); });
+          });
+        }
+        simple('.pause', 'Pausing', 'pause');
+        simple('.resume', 'Resuming', 'resume');
+
+        var retry = card.querySelector('.retry');
+        if(retry) retry.addEventListener('click', function(){
+          retry.disabled = true; out.className = 'result'; out.textContent = 'Requeueing\u2026';
+          call('/api/syncs/' + encodeURIComponent(id) + '/retry-failures', {method:'POST'},
+            out, retry, null, function(j){
+              out.className = 'result ok';
+              out.textContent = 'Requeued ' + plural(Number(j.requeued || 0), 'record') + '. Refreshing\u2026';
+              load();
+            });
+        });
+
+        var count = card.querySelector('.count');
+        if(count) count.addEventListener('click', function(){
+          count.disabled = true; out.className = 'result'; out.textContent = 'Counting\u2026';
+          call('/api/syncs/' + encodeURIComponent(id) + '/rows', null, out, count, null,
+            function(j){
+              out.className = 'result ok';
+              out.textContent = num(j.rows) + ' rows in destination.';
+            }).then(function(){ count.disabled = false; });
+        });
+      })(objs[i]);
+    }
+
+    var cards = body.querySelectorAll('[data-dest]');
+    for(var c=0;c<cards.length;c++){
+      (function(card){
+        var id = card.getAttribute('data-dest');
+        var btn = card.querySelector('.remove');
+        if(!btn) return;
+        var out = card.querySelector('.dest-result');
+        arm(btn, out, 'Remove', 'This deletes its syncs and their history. Your rows stay.',
+          function(b, o){
+            call('/api/destinations/' + encodeURIComponent(id), {method:'DELETE'},
+              o, b, 'Remove', function(j){
+                o.className = 'result ok';
+                o.textContent = 'Removed, with ' + plural(Number(j.syncsRemoved || 0), 'sync') + '.';
+                loadDestinations(); load();
+              });
+          });
+      })(cards[c]);
+    }
+  }
+
+  // Leaving has to be as visible as arriving. A customer who cannot find the way
+  // out uninstalls in HubSpot instead and never tells you why.
+  function renderDanger(){
+    if(!CONNECTION || REVOKED){ dangerBox.innerHTML = ''; return; }
+    dangerBox.innerHTML =
+      '<div class="section-label">Disconnect</div>' +
+      '<div class="card"><div class="pad">' +
+      '<div style="display:flex;gap:.75rem;align-items:center;flex-wrap:wrap">' +
+      '<span style="flex:1;min-width:14rem"><b>Disconnect HubSpot</b><br>' +
+      '<span class="sub">Stops all syncing, removes Syncive from your HubSpot account and ' +
+      'deletes the credentials it holds. HubSpot emails your admins to confirm. Your data ' +
+      'is left exactly as it is \u2014 installing again starts it back up.</span></span>' +
+      '<button class="btn btn-danger disconnect">Disconnect</button></div>' +
+      '<div class="result" style="margin-top:.5rem"></div></div></div>';
+
+    var btn = dangerBox.querySelector('.disconnect');
+    var out = dangerBox.querySelector('.result');
+    arm(btn, out, 'Disconnect', 'Syncive is removed from HubSpot. Your data stays.',
+      function(b, o){
+        call('/api/connections/' + encodeURIComponent(CONNECTION) + '/disconnect',
+          {method:'POST'}, o, b, 'Disconnect', function(){ load(); });
+      });
+  }
+
+  // ---- loading --------------------------------------------------------------
+
   function load(){
-    fetch('/api/accounts/' + encodeURIComponent(ACCOUNT) + '/health', {headers:{accept:'application/json'}})
+    return fetch('/api/accounts/' + encodeURIComponent(ACCOUNT) + '/health',
+                 {headers:{accept:'application/json'}})
       .then(function(r){
-        return r.text().then(function(body){
+        return r.text().then(function(t){
           if(!r.ok){
-            var msg = body;
-            try { var j = JSON.parse(body); msg = j.error || body; } catch(e){}
-            throw new Error('HTTP ' + r.status + ' — ' + (msg || r.statusText || 'request failed'));
+            var msg = t;
+            try { msg = JSON.parse(t).error || t; } catch(e){}
+            throw new Error('HTTP ' + r.status + ' \u2014 ' + (msg || r.statusText));
           }
-          return JSON.parse(body);
+          return JSON.parse(t);
         });
       })
-      .then(render)
+      .then(function(j){ HEALTH = j; render(); })
       .catch(function(err){
         updated.textContent = 'Last attempt ' + new Date().toLocaleTimeString();
-        setBanner('bad', 'Could not load sync health', String(err.message || err));
-        if(!list.innerHTML){
-          list.innerHTML = '<div class="card empty"><p>The dashboard will keep retrying every ' +
-            '30 seconds. If this persists, check that the engine is running and that the ' +
-            'account id in this link is correct.</p></div>';
+        setHero('bad', 'Could not load sync health', String(err.message || err));
+        if(!body.innerHTML){
+          body.innerHTML = '<div class="card"><div class="pad sub">Retrying every 30 seconds. ' +
+            'If this persists, check that the engine is running.</div></div>';
         }
       });
   }
 
-  load();
-  loadDestinations();
+  function loadDestinations(){
+    return fetch('/api/destinations', {headers:{accept:'application/json'}})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(j){ if(j){ DESTS = j.destinations || []; render(); } })
+      .catch(function(){ /* the object rows are the page; grouping is a bonus */ });
+  }
+
+  loadDestinations().then(load);
   setInterval(load, 30000);
   setInterval(loadDestinations, 30000);
 })();

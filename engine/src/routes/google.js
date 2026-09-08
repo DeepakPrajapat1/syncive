@@ -112,12 +112,18 @@ googleRouter.post('/pick', requireAccountPage, async (req, res) => {
     // half-used sheets.
     const existing = JSON.parse(decrypt(rows[0].config_enc))
     sheet = existing.spreadsheetId
-      ? { spreadsheetId: existing.spreadsheetId, url: existing.spreadsheetUrl }
-      : await createSpreadsheet(destinationId, title)
+      ? { spreadsheetId: existing.spreadsheetId, url: existing.spreadsheetUrl,
+          title: existing.spreadsheetTitle || title }
+      : { ...(await createSpreadsheet(destinationId, title)), title }
 
     await query(`update syncive.destinations set config_enc = $2, status = 'ready' where id = $1`, [
       destinationId,
-      encrypt(JSON.stringify({ ...existing, spreadsheetId: sheet.spreadsheetId, spreadsheetUrl: sheet.url })),
+      encrypt(JSON.stringify({
+        ...existing,
+        spreadsheetId: sheet.spreadsheetId,
+        spreadsheetUrl: sheet.url,
+        spreadsheetTitle: sheet.title,
+      })),
     ])
   } catch (err) {
     console.error('[google] could not create the spreadsheet', err)

@@ -1,5 +1,5 @@
 import express from 'express'
-import { encrypt } from '../config.js'
+import { decrypt, encrypt } from '../config.js'
 import { logEvent, query } from '../db/meta.js'
 import { closeDestPool, verifyDestination } from '../db/dest.js'
 import { forgetKind, total } from '../destinations/index.js'
@@ -49,6 +49,7 @@ apiRouter.post('/destinations', wrap(async (req, res) => {
 apiRouter.get('/destinations', wrap(async (req, res) => {
   const { rows } = await query(
     `select d.id, d.schema_name, d.status, d.created_at,
+            coalesce(d.kind, 'postgres') as kind, d.config_enc,
             coalesce(json_agg(json_build_object(
               'id', s.id, 'object_type', s.object_type, 'state', s.state,
               'last_success_at', s.last_success_at
@@ -60,8 +61,28 @@ apiRouter.get('/destinations', wrap(async (req, res) => {
       order by d.created_at`,
     [req.accountId]
   )
-  res.json({ destinations: rows })
+  res.json({ destinations: rows.map(describeDestination) })
 }))
+
+// The dashboard groups syncs by destination, so each one needs a name a customer
+// recognises. For Sheets that is the spreadsheet's own title and link; for
+// Postgres, the schema. config_enc holds the Google refresh token as well, so it
+// is unpacked here and never sent to the browser.
+function describeDestination(row) {
+  const { config_enc, ...rest } = row
+  const out = { ...rest, label: row.schema_name, url: null }
+  if (row.kind !== 'sheets') return out
+  out.label = 'Google Sheets'
+  try {
+    const config = JSON.parse(decrypt(config_enc))
+    if (config.spreadsheetTitle) out.label = config.spreadsheetTitle
+    if (config.spreadsheetUrl) out.url = config.spreadsheetUrl
+  } catch {
+    // An unreadable config is a broken destination, not a broken page — the
+    // sync cards below will say so themselves.
+  }
+  return out
+}
 
 // Remove a destination and the syncs that write through it. Nothing in the
 // customer's own database is touched — their tables and rows stay exactly where
@@ -250,7 +271,8 @@ apiRouter.get('/accounts/:accountId/health', requireOwnAccount, wrap(async (req,
   const { rows: syncs } = await query(
     `select s.id, s.object_type, s.state, s.enabled, s.backfilled_at, s.last_event_at,
             s.last_success_at, c.id as connection_id, c.portal_id,
-            c.revoked_at, c.revoked_reason, d.schema_name
+            c.revoked_at, c.revoked_reason, d.schema_name,
+            d.id as destination_id, coalesce(d.kind, 'postgres') as destination_kind
        from syncive.syncs s
        join syncive.hubspot_connections c on c.id = s.connection_id
        join syncive.destinations d on d.id = s.destination_id
