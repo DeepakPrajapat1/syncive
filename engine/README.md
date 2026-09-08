@@ -175,6 +175,3 @@ Missing:
 - Two-way sync (write-back to HubSpot) — needs conflict rules before it's safe
 - Alerting on `degraded` (email or Slack) — the dashboard only helps if someone looks
 - Billing
-- Auto-deploy from GitHub (Render is connected by public URL, so deploys are manual)
-
-<!-- auto-deploy check: 2026-09-08T15:55:21Z -->
