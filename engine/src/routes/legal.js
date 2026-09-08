@@ -10,6 +10,12 @@ export const legalRouter = express.Router()
 legalRouter.get('/privacy', (req, res) => res.type('html').send(page(PRIVACY)))
 legalRouter.get('/terms', (req, res) => res.type('html').send(page(TERMS)))
 
+// The root used to 404. Google's OAuth consent screen wants a home page link
+// that actually resolves and visibly relates to the app, and so does HubSpot's
+// listing — a 404 there reads as an abandoned project. It also gives anyone who
+// trims the URL somewhere sensible to land.
+legalRouter.get('/', (req, res) => res.type('html').send(HOME))
+
 // Filled in from the environment so the address can change without a code
 // change. Until it is set the pages say so rather than naming an inbox that
 // does not exist — a contact address nobody reads is worse than none.
@@ -378,3 +384,96 @@ right to bring proceedings, or requires a different law to apply.</p>
 <p>${mail()}</p>
 `,
 }
+
+// ---------------------------------------------------------------------------
+
+const HOME = `<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Syncive — HubSpot into your own database or spreadsheet</title>
+<meta name="description" content="Syncive keeps your HubSpot contacts, companies and deals mirrored into a Postgres database you own, or a Google Sheet in your own Drive.">
+<style>
+  :root{--bg:#f7f8fa;--panel:#fff;--border:#e4e7ec;--text:#101828;--muted:#667085;
+        --accent:#2563eb}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+       -webkit-font-smoothing:antialiased}
+  a{color:var(--accent)}
+  .topbar{background:rgba(255,255,255,.9);border-bottom:1px solid var(--border)}
+  .topbar .inner,.wrap{max-width:44rem;margin:0 auto;padding:0 1.25rem}
+  .topbar .inner{display:flex;align-items:center;gap:.6rem;height:3.2rem}
+  .mark{width:1.4rem;height:1.4rem;border-radius:.45rem;
+        background:linear-gradient(140deg,#2563eb,#7c3aed)}
+  .brand{font-weight:650;letter-spacing:-.01em}
+  .spacer{flex:1}
+  .topbar a{font-size:.85rem;text-decoration:none;color:var(--muted)}
+  .topbar a:hover{color:var(--accent)}
+  .wrap{padding:3.5rem 1.25rem 4rem}
+  h1{font-size:2rem;line-height:1.2;letter-spacing:-.025em;margin:0 0 .75rem}
+  .lede{font-size:1.05rem;color:#344054;margin:0 0 2rem}
+  h2{font-size:1rem;margin:2.4rem 0 .6rem}
+  ul{padding-left:1.2rem;color:#344054}
+  li{margin:.35rem 0}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));gap:.75rem;
+         margin:1.5rem 0}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:.7rem;
+        padding:.9rem 1rem}
+  .card b{display:block;margin-bottom:.15rem}
+  .card span{color:var(--muted);font-size:.88rem}
+  .cta{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;
+       font-weight:560;border-radius:.5rem;padding:.6rem 1.1rem;margin-top:.5rem}
+  .cta:hover{background:#1d4ed8;text-decoration:none}
+  .note{color:var(--muted);font-size:.88rem}
+  .foot{margin-top:3.5rem;padding-top:1.2rem;border-top:1px solid var(--border);
+        color:var(--muted);font-size:.85rem}
+</style>
+<div class="topbar"><div class="inner">
+  <span class="mark"></span><span class="brand">Syncive</span>
+  <span class="spacer"></span>
+  <a href="/privacy">Privacy</a> <a href="/terms">Terms</a>
+</div></div>
+<div class="wrap">
+  <h1>Your HubSpot data, in a place you own.</h1>
+  <p class="lede">Syncive keeps your HubSpot contacts, companies and deals mirrored
+    into a Postgres database you control &mdash; or a Google Sheet in your own Drive.
+    Set it up once; it stays current on its own.</p>
+
+  <div class="cards">
+    <div class="card"><b>Postgres</b><span>Your Supabase, RDS or own server.
+      Query your CRM with SQL, join it to the rest of your business data.</span></div>
+    <div class="card"><b>Google Sheets</b><span>A spreadsheet Syncive creates in your
+      Drive. Your formulas, filters and notes survive every sync.</span></div>
+  </div>
+
+  <h2>How it works</h2>
+  <ul>
+    <li>Connect your HubSpot portal and choose a destination.</li>
+    <li>Syncive copies everything across, then applies each change as HubSpot
+      reports it &mdash; creates, edits and deletes.</li>
+    <li>Once an hour it re-checks anything HubSpot says changed recently, so a
+      dropped notification does not leave your data quietly wrong.</li>
+    <li>A health page shows what synced, what failed, and lets you retry.</li>
+  </ul>
+
+  <h2>What it does not do</h2>
+  <ul>
+    <li>It never writes back to HubSpot. Every HubSpot permission it asks for is
+      read-only.</li>
+    <li>It keeps no copy of your CRM &mdash; only the wiring, a short event log,
+      and changes it could not deliver so they can be retried.
+      The <a href="/privacy">privacy policy</a> spells this out.</li>
+    <li>For Google Sheets it asks only for access to the file it created itself.
+      It cannot see anything else in your Drive.</li>
+  </ul>
+
+  <h2>Early access</h2>
+  <p class="note">Syncive is free while in early access, and is not a backup
+    product &mdash; do not rely on it as your only copy of anything. The
+    <a href="/terms">terms</a> say plainly what is and is not promised.</p>
+
+  <a class="cta" href="/oauth/install">Connect your HubSpot portal</a>
+
+  <p class="foot">Syncive &middot; ${mail()} &middot;
+    <a href="/privacy">Privacy Policy</a> &middot; <a href="/terms">Terms of Service</a></p>
+</div>`
