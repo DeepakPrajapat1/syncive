@@ -305,8 +305,9 @@ const renderDashboard = (accountId) => `${HEAD}
     h += '<span class="obj-name">' + esc(s.object_type) + '</span>';
     h += '<span class="badge ' + t + '">' + esc(s.health) + '</span>';
     h += '<span class="fill"></span>';
-    h += '<span class="val hide-sm"><b>' + esc(num(s.records_synced_24h)) +
-         '</b> records / 24h</span>';
+    var recs = Number(s.records_synced_24h || 0);
+    h += '<span class="val hide-sm"><b>' + esc(num(recs)) + '</b> record' +
+         (recs === 1 ? '' : 's') + ' / 24h</span>';
     h += '<span class="val">' + esc(ago(s.last_success_at)) + '</span>';
     h += CHEV + '</button>';
 
@@ -427,7 +428,9 @@ const renderDashboard = (accountId) => `${HEAD}
         'reinstall Syncive in HubSpot to start syncing again.');
     } else if(bad){
       setHero('bad', 'Attention needed',
-        bad + ' of ' + syncs.length + ' objects have failed events or undelivered records.');
+        plural(bad, 'object') + ' of ' + syncs.length + ' had failed events or ' +
+        'undelivered records' + (staleN ? ', and ' + plural(staleN, 'other') +
+        ' has not synced in over 3 hours' : '') + '.');
     } else if(staleN){
       setHero('attention', plural(staleN, 'object') + ' behind',
         'No successful sync in over 3 hours. The hourly reconcile will retry on its own.');
