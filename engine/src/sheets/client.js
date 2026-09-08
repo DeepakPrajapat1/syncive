@@ -55,6 +55,27 @@ export async function ensureTab(destinationId, spreadsheetId, title) {
   const found = meta.sheets?.find((s) => s.properties?.title === title)
   if (found) return found.properties.sheetId
 
+  // A brand-new spreadsheet ships with an untouched default sheet ("Sheet1").
+  // Rename it for the first object rather than leaving an empty tab behind.
+  const sheets = meta.sheets || []
+  const leftover = sheets.length === 1 && /^Sheet1$/i.test(sheets[0].properties?.title || '')
+    ? sheets[0].properties
+    : null
+  if (leftover) {
+    await request(destinationId, `/${spreadsheetId}:batchUpdate`, {
+      method: 'POST',
+      body: {
+        requests: [{
+          updateSheetProperties: {
+            properties: { sheetId: leftover.sheetId, title },
+            fields: 'title',
+          },
+        }],
+      },
+    })
+    return leftover.sheetId
+  }
+
   const created = await request(destinationId, `/${spreadsheetId}:batchUpdate`, {
     method: 'POST',
     body: { requests: [{ addSheet: { properties: { title } } }] },
