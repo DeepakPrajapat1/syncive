@@ -1,8 +1,9 @@
 import express from 'express'
-import { encrypt, google, googleConfigured, requireGoogle } from '../config.js'
+import { decrypt, encrypt, googleConfigured, requireGoogle } from '../config.js'
 import { query } from '../db/meta.js'
 import { requireAccountPage } from '../auth.js'
 import { buildAuthUrl, exchangeCode, verifyState } from '../sheets/oauth.js'
+import { createSpreadsheet } from '../sheets/client.js'
 import { enqueueBackfill } from '../queue/jobs.js'
 import { OBJECT_TYPES } from '../hubspot/client.js'
 
@@ -24,8 +25,7 @@ googleRouter.get('/connect', requireAccountPage, (req, res) => {
 })
 
 // Google sends the customer back here. The tokens are stored against a
-// destination that has no spreadsheet yet — picking one is the next step, and
-// with drive.file we cannot see any file until they hand us one.
+// destination that has no spreadsheet yet; the next page names and creates one.
 googleRouter.get('/callback', async (req, res) => {
   try { requireGoogle() } catch (err) { return res.status(503).send(err.message) }
   const { code, state, error } = req.query
@@ -83,18 +83,12 @@ googleRouter.get('/pick', requireAccountPage, async (req, res) => {
 
 googleRouter.post('/pick', requireAccountPage, async (req, res) => {
   const destinationId = String(req.body.destination || '')
-  const raw = String(req.body.spreadsheet || '').trim()
+  const title = String(req.body.title || '').trim() || 'HubSpot — Syncive'
   const chosen = OBJECT_TYPES.filter((t) => req.body[`obj_${t}`])
-
-  // People paste the whole browser URL far more often than a bare id.
-  const spreadsheetId = (raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/) || [null, raw])[1]
 
   const back = (message) =>
     res.status(400).type('html').send(renderPick({ destinationId, error: message }))
 
-  if (!/^[a-zA-Z0-9-_]{20,}$/.test(spreadsheetId || '')) {
-    return back('That does not look like a Google Sheets link or id.')
-  }
   if (!chosen.length) return back('Pick at least one object to sync.')
 
   const { rows } = await query(
@@ -104,19 +98,31 @@ googleRouter.post('/pick', requireAccountPage, async (req, res) => {
   )
   if (!rows.length) return back('That connection no longer exists.')
 
-  const { decrypt } = await import('../config.js')
-  const config = { ...JSON.parse(decrypt(rows[0].config_enc)), spreadsheetId }
-  await query(`update syncive.destinations set config_enc = $2, status = 'ready' where id = $1`, [
-    destinationId,
-    encrypt(JSON.stringify(config)),
-  ])
-
   const { rows: conns } = await query(
     `select id from syncive.hubspot_connections
       where account_id = $1 and revoked_at is null order by created_at limit 1`,
     [req.accountId]
   )
   if (!conns.length) return back('No HubSpot portal is connected for this account yet.')
+
+  let sheet
+  try {
+    // Reuse the spreadsheet if this destination already has one, so a customer
+    // who comes back through this page does not end up with a Drive full of
+    // half-used sheets.
+    const existing = JSON.parse(decrypt(rows[0].config_enc))
+    sheet = existing.spreadsheetId
+      ? { spreadsheetId: existing.spreadsheetId, url: existing.spreadsheetUrl }
+      : await createSpreadsheet(destinationId, title)
+
+    await query(`update syncive.destinations set config_enc = $2, status = 'ready' where id = $1`, [
+      destinationId,
+      encrypt(JSON.stringify({ ...existing, spreadsheetId: sheet.spreadsheetId, spreadsheetUrl: sheet.url })),
+    ])
+  } catch (err) {
+    console.error('[google] could not create the spreadsheet', err)
+    return back(`Could not create the spreadsheet: ${err.message}`)
+  }
 
   const created = []
   for (const objectType of chosen) {
@@ -131,7 +137,7 @@ googleRouter.post('/pick', requireAccountPage, async (req, res) => {
     await enqueueBackfill(sync[0].id, { force: true })
   }
 
-  res.type('html').send(renderDone(created))
+  res.type('html').send(renderDone(created, sheet.url))
 })
 
 const HEAD = `<!doctype html>
@@ -175,17 +181,17 @@ const renderMissing = (message) => `${HEAD}
 
 const renderPick = ({ destinationId, error }) => `${HEAD}
 <div class="wrap">
-  <h1>Choose the spreadsheet</h1>
-  <p class="sub">Syncive can only see the sheet you give it — it has no access to the rest of your Drive.</p>
+  <h1>Name the spreadsheet</h1>
+  <p class="sub">Syncive creates a new sheet in your Google Drive and syncs into it. It can see
+     that one file and nothing else you have.</p>
   ${error ? `<div class="card err">${esc(error)}</div>` : ''}
   <form method="post" class="card">
     <input type="hidden" name="destination" value="${esc(destinationId)}">
     <div class="field">
-      <label for="s">Google Sheets link</label>
-      <input id="s" name="spreadsheet" type="text" required spellcheck="false"
-             placeholder="https://docs.google.com/spreadsheets/d/...">
-      <p class="hint">Paste the whole address from your browser. Syncive writes one tab per
-         object and leaves anything you add to the right of its columns alone.</p>
+      <label for="t">Spreadsheet name</label>
+      <input id="t" name="title" type="text" value="HubSpot &mdash; Syncive" spellcheck="false">
+      <p class="hint">It appears in your Drive straight away. Rename or move it whenever you like —
+         Syncive keeps writing to the same file.</p>
     </div>
     <div class="field">
       <label>Objects to sync</label>
@@ -193,16 +199,16 @@ const renderPick = ({ destinationId, error }) => `${HEAD}
         (t) => `<label><input type="checkbox" name="obj_${esc(t)}" value="1" checked> ${esc(t)}</label>`
       ).join('')}</div>
     </div>
-    <button type="submit">Start syncing</button>
+    <button type="submit">Create it and start syncing</button>
   </form>
   <div class="card">
-    <p class="hint" style="margin:0">Make sure the Google account you just connected can edit
-      that spreadsheet. Syncive never clears the sheet: it updates its own rows and appends new
-      ones, so your formulas, filters and notes survive.</p>
+    <p class="hint" style="margin:0">One tab per object. Syncive never clears the sheet: it updates
+      its own rows and appends new ones, so anything you add to the right of its columns — formulas,
+      notes, filters — survives every sync.</p>
   </div>
 </div>`
 
-const renderDone = (created) => `${HEAD}
+const renderDone = (created, url) => `${HEAD}
 <div class="wrap">
   <h1>Connected</h1>
   <div class="card ok">
@@ -211,6 +217,7 @@ const renderDone = (created) => `${HEAD}
   </div>
   <div class="card">
     <p style="margin:0">First rows appear within a minute or two.</p>
+    ${url ? `<p style="margin:.5rem 0 0"><a href="${esc(url)}" target="_blank" rel="noreferrer">Open the spreadsheet &rarr;</a></p>` : ''}
     <p style="margin:.5rem 0 0"><a href="/dashboard">Open the sync dashboard &rarr;</a></p>
   </div>
 </div>`

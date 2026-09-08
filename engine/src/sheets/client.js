@@ -34,6 +34,19 @@ async function request(destinationId, path, { method = 'GET', body, retries = 5 
   return res.status === 204 ? null : res.json()
 }
 
+// drive.file only covers files this app created or the customer opened through
+// Google's own picker. A spreadsheet whose link they pasted is not one of those:
+// the scope would look granted and every write would come back 404. Creating the
+// file ourselves keeps the scope non-sensitive AND removes a step — there is no
+// link to go and find.
+export async function createSpreadsheet(destinationId, title) {
+  const created = await request(destinationId, '', {
+    method: 'POST',
+    body: { properties: { title } },
+  })
+  return { spreadsheetId: created.spreadsheetId, url: created.spreadsheetUrl }
+}
+
 export const getSpreadsheet = (destinationId, spreadsheetId) =>
   request(destinationId, `/${spreadsheetId}?fields=properties.title,sheets.properties`)
 

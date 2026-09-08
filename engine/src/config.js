@@ -72,7 +72,10 @@ export const google = {
   apiKey: process.env.GOOGLE_API_KEY || '',
   scopes: ['https://www.googleapis.com/auth/drive.file'],
   get redirectUri() {
-    return `${config.publicUrl}/oauth/google/callback`
+    // Must match the route exactly — the Google router is mounted at /google,
+    // and a redirect_uri that disagrees by one path segment fails the exchange
+    // with a message that does not say which side is wrong.
+    return `${config.publicUrl}/google/callback`
   },
 }
 
